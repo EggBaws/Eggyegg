@@ -1,0 +1,23 @@
+[
+  {
+    "clientOrderId": "choke-v1-ETHUSDT-20260924",
+    "pair": "ETHUSDT",
+    "side": "buy",
+    "type": "LIMIT",
+    "price": 2650,
+    "qty": 3.7735849,
+    "sl": 2641.99,
+    "tp": 2679.68,
+    "reduceOnlySlTp": true,
+    "liveArmed": false,
+    "reason": "LIVE_OFF",
+    "mode": "dry-run",
+    "venue": "kucoin",
+    "tsUk": "2026-09-24T08:00:00.500+01:00",
+    "tsMs": 1790233200500,
+    "btcAligned": false,
+    "marginRiskPct": 0.030226415094340445,
+    "leverage": 10,
+    "tpPricePct": 0.0112
+  }
+]

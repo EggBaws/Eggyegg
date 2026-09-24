@@ -1,0 +1,4 @@
+node_modules/
+*.log
+logs/notify.log
+.DS_Store

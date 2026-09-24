@@ -1,0 +1,42 @@
+{
+  "fixtures": 22,
+  "agree": 12,
+  "miss": 10,
+  "specialists_take": 9,
+  "specialists_skip": 13,
+  "scrape_take": 19,
+  "scrape_skip": 3,
+  "miss_take_to_skip": [
+    "fx-2025-weekend-sol-short-fri-ob",
+    "fx-2026-04-22-sol-short-brake-acc",
+    "fx-2026-04-20-eth-long-brake-acc",
+    "fx-2026-04-21-sol-short-brake-acc",
+    "fx-2026-04-24-sol-long-friday",
+    "fx-2026-08-26-eth-long-1h-sweep",
+    "fx-2026-08-24-eth-short-1h-sweep",
+    "fx-2026-08-28-eth-short-fvg",
+    "fx-2026-01-26-sol-short-0936",
+    "fx-2026-01-28-sol-short-fvg-acc"
+  ],
+  "miss_skip_to_take": [],
+  "miss_take_to_skip_count": 10,
+  "miss_skip_to_take_count": 0,
+  "path": "/workspace/balazs-fixtures/scoreboard/specialists-veto.jsonl",
+  "live_clean_takes": [
+    "fx-2025-11-25-sol-short-first-inj",
+    "fx-2025-11-25-sol-short-main",
+    "fx-2025-11-10-sol-short",
+    "fx-2025-11-12-sol-short-1400",
+    "fx-2025-11-11-sol-short-1354-2m",
+    "fx-2026-01-23-sol-long-mss-fvg",
+    "fx-2026-01-sol-short-1158",
+    "fx-2026-01-sol-short-1033-sweep",
+    "fx-2026-01-27-sol-short-1354"
+  ],
+  "severity": {
+    "pass": 9,
+    "hard_skip": 3,
+    "warn": 10
+  },
+  "policy": "contested take\u2192skip = warn not hard skip; fixtures stay Balazs-truth"
+}

@@ -1,0 +1,67 @@
+//@version=5
+// Choke Watcher v1 — optional mirror.
+// The TypeScript engine is the source of truth. If a plot disagrees with the engine, the engine wins.
+// This study does not place orders.
+indicator("Choke Watcher v1 (mirror)", overlay=true)
+
+// Window is disabled. This study does not hide bars by clock.
+tick = input.float(0.01, "Tick", minval=0.00000001)
+left = input.int(2, "Swing left", minval=1)
+right = input.int(2, "Swing right", minval=1)
+tpPct = input.float(0.0112, "TP % of entry", minval=0.0, step=0.0001)
+chaseFrac = input.float(0.4, "Chase neck fraction", minval=0.0, step=0.05)
+
+swingLow = ta.pivotlow(low, left, right)
+swingHigh = ta.pivothigh(high, left, right)
+var float priorLow = na
+var float priorHigh = na
+if not na(swingLow)
+    priorLow := swingLow
+if not na(swingHigh)
+    priorHigh := swingHigh
+
+sweepLong = not na(priorLow) and low <= priorLow - tick and low == ta.lowest(low, left + right + 1)
+sweepShort = not na(priorHigh) and high >= priorHigh + tick and high == ta.highest(high, left + right + 1)
+
+// Bullish 3-candle FVG: candle[2].high < candle[0].low on a bullish close. Bearish is the mirror.
+fvgLong = close > open and high[2] < low
+fvgShort = close < open and low[2] > high
+fvgLow = fvgLong ? high[2] : fvgShort ? high : na
+fvgTop = fvgShort ? low[2] : fvgLong ? low : na
+
+// 1h MA5 is an entry-cap input only. It is not a trend gate.
+h1 = request.security(syminfo.tickerid, "60", ta.sma(close, 5))
+
+var float sweepPx = na
+var float smashPx = na
+if sweepLong
+    sweepPx := low
+    smashPx := na
+if sweepShort
+    sweepPx := high
+    smashPx := na
+if not na(sweepPx) and close > math.max(open[1], close[1]) and sweepPx == low[1]
+    smashPx := high
+if not na(sweepPx) and close < math.min(open[1], close[1]) and sweepPx == high[1]
+    smashPx := low
+
+mid = not na(sweepPx) and not na(smashPx) ? (sweepPx + smashPx) / 2.0 : na
+capLong = math.min(nz(h1, 1e12), nz(mid, 1e12), nz(fvgLow, 1e12))
+capShort = math.max(nz(h1, -1e12), nz(mid, -1e12), nz(fvgTop, -1e12))
+entry = sweepLong ? capLong : sweepShort ? capShort : na
+sl = sweepLong ? low - tick : sweepShort ? high + tick : na
+tp = sweepLong ? entry * (1 + tpPct) : sweepShort ? entry * (1 - tpPct) : na
+neck = sweepLong ? ta.highest(high, 3) : sweepShort ? ta.lowest(low, 3) : na
+
+plot(sweepPx, "Sweep", color=color.orange, style=plot.style_linebr)
+plot(neck, "Neck", color=color.white, style=plot.style_linebr)
+plot(fvgLow, "FVG low", color=color.purple, style=plot.style_linebr)
+plot(fvgTop, "FVG high", color=color.purple, style=plot.style_linebr)
+plot(entry, "Zone / entry cap", color=color.green, style=plot.style_linebr)
+plot(sl, "SL", color=color.red, style=plot.style_linebr)
+plot(tp, "TP 1.12%", color=color.blue, style=plot.style_linebr)
+
+neckH = math.abs(nz(neck) - nz(sweepPx))
+chased = sweepLong and close > nz(entry) + chaseFrac * neckH
+if chased
+    label.new(bar_index, high, "CHASE", style=label.style_label_down, color=color.gray, textcolor=color.white)

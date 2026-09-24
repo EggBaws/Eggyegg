@@ -1,0 +1,17 @@
+{
+  "name": "choke-watcher",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test --test-reporter=spec packages/engine/test/*.test.ts packages/venues/test/*.test.ts packages/notify/test/*.test.ts",
+    "dry-run": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/dry-run.ts",
+    "start": "node --disable-warning=ExperimentalWarning --experimental-strip-types apps/web/server.ts"
+  },
+  "engines": {
+    "node": ">=22.14"
+  }
+}

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Choke Watcher</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div>
+        <p class="eyebrow">Paper desk</p>
+        <h1>Choke Watcher</h1>
+      </div>
+      <div class="top-meta">
+        <p id="clock" class="clock">—</p>
+        <p id="venue" class="muted"></p>
+        <span id="armed" class="badge off">LIVE_ARMED</span>
+      </div>
+    </header>
+    <p id="holiday" class="holiday" hidden></p>
+    <p class="window-note">Fire window off — detection runs all day. Status badge only; arming stays a config flag.</p>
+    <section id="tiles" class="tiles" aria-label="Pairs"></section>
+    <section id="detail" class="detail" hidden>
+      <div class="detail-head">
+        <h2 id="detail-title">Chart</h2>
+        <button id="close-detail" type="button">Close</button>
+      </div>
+      <div class="legend" aria-hidden="true">
+        <span class="swatch orange">sweep</span>
+        <span class="swatch white">neck</span>
+        <span class="swatch purple">FVG</span>
+        <span class="swatch green">zone</span>
+        <span class="swatch red">SL</span>
+        <span class="swatch blue">TP</span>
+        <span class="swatch grey">NOW</span>
+      </div>
+      <canvas id="chart" width="960" height="420"></canvas>
+      <pre id="stamp"></pre>
+      <p id="ping" class="ping"></p>
+    </section>
+    <section class="review">
+      <div class="detail-head">
+        <h2>Night review</h2>
+        <div class="row">
+          <button id="export" type="button">Export JSON</button>
+          <button id="replay" type="button">Replay synthetic</button>
+          <button id="kill" type="button" class="danger">Kill today</button>
+        </div>
+      </div>
+      <div id="review"></div>
+    </section>
+    <script src="/app.js"></script>
+  </body>
+</html>

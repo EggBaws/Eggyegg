@@ -1,0 +1,28 @@
+{
+  "live_armed": false,
+  "active_venue": "kucoin",
+  "pairs": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+  "stake_gbp": 1000,
+  "leverage": 10,
+  "max_margin_risk": 0.06,
+  "tp_price_pct": 0.0112,
+  "window_start": null,
+  "window_end": null,
+  "timezone": "Europe/London",
+  "first_tag": true,
+  "btc_align_required": false,
+  "max_arms_per_pair_per_day": 1,
+  "max_fills_across_book": 3,
+  "dry_run_log": "./logs/orders.json",
+  "notify_log": "./logs/notify.log",
+  "notify_debounce_ms": 300000,
+  "stale_close_ms": 2000,
+  "chase_neck_frac": 0.4,
+  "swing_left": 2,
+  "swing_right": 2,
+  "ticks": {
+    "BTCUSDT": 0.1,
+    "ETHUSDT": 0.01,
+    "SOLUSDT": 0.001
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "live_armed": false,
+  "venues": [
+    "MEXC",
+    "KuCoin"
+  ],
+  "pairs": [
+    "SOL",
+    "BTC",
+    "ETH"
+  ],
+  "preferred_fire_pair": "SOL",
+  "bias": {
+    "primary_tf": "30m",
+    "fallback_tf": "1h",
+    "fallback_when": "30m_muddy",
+    "notes": "BTC 30m BOS/OB primary; 1h only if 30m muddy. Often read 12:00\u201313:00 UK 1h candle (NY 7\u20138am)."
+  },
+  "choke_definition": {
+    "source": "src-20.jpg Oct 18 2025",
+    "steps": [
+      "BTC in hourly OB or FVG (bias context)",
+      "Price reverses and creates a neck",
+      "Retrace without new highs/lows",
+      "Neck smashed with strong candle, ideally with FVG",
+      "Retest that FVG (or prior FVG) for entry",
+      "SOL must be doing the same; fire on SOL (needs less move for ~1% TP)"
+    ],
+    "sl": "high or low of the neck (right side of neck) \u2192 neck_extreme",
+    "entry_tf": "3m FVG acc / choke"
+  },
+  "align": {
+    "rule": "pair 3m MSS same window as BTC 3m; one FVG/acc enough",
+    "tag": "btc_pair_3m_align",
+    "notes": "BTC FVG+acc + SOL MSS-only is still a take on SOL. Acc must appear same time, not 5 candles after MSS. If 3m muddy, 2m can confirm."
+  },
+  "window": {
+    "days": "Mon\u2013Fri",
+    "uk": "13:00\u201321:00",
+    "original_start_uk": "13:30",
+    "ny_main_approx": "09:30\u201312:30 NY (rarely from 08:30 NY)",
+    "skip": [
+      "NY bank holidays",
+      "England bank holidays"
+    ],
+    "hard_stop_uk": "21:00",
+    "late_ny": "~20:00\u201321:00 UK and 17:54 main-move examples",
+    "london_note": "London can already do the drop \u2014 dangerous; NY does the real move"
+  },
+  "tp_sl": {
+    "tp_primary": "1.12%_fees",
+    "tp_alt_rr": "2.24R",
+    "tp_visual_common": "~1:3",
+    "sl_default": "neck_extreme",
+    "sl_alt": "past_sweep_wick",
+    "sl_notes": "If no FVG acc on SOL, SL to previous high/low (neck). Brake & Acceptance pack often uses past_sweep_wick + entry in acc range."
+  },
+  "scenarios": {
+    "1": "In NY range (between prev NY high/low): BTC 1h/30m BOS picks root OB; wait return to root OB for direction",
+    "2": "Above prev NY high: bull OB created above high (night/London) = root; long when price returns with FVG acc",
+    "3": "Below prev NY low: bear OB under low + BOS down; wait NY return \u2192 short",
+    "4": "Retail trap: bull OB just under/near NY high (people think long) but root is fresh/older bear OB above \u2192 short",
+    "5": "Mirror trap under NY low: fake bear OB near low; root bull OB below \u2192 long",
+    "6": "Weekend: Friday NY OB only; mark Friday NY high/low; deny Sat/Sun fake BOS; alert to Friday OB"
+  },
+  "scenario_sources": [
+    "src-28.jpg",
+    "src-19.jpg",
+    "src-12.jpg"
+  ],
+  "session_sources": [
+    "src-02.jpg",
+    "src-07.jpg",
+    "src-20.jpg",
+    "src-13.jpg"
+  ],
+  "checklist_note": "Short paper checklist mandatory \u2014 human nervous system loses recognition after ~1h of screen time (src-05/06/13)."
+}
