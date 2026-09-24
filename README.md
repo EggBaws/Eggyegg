@@ -18,8 +18,9 @@ npm start
 
 - `npm test` covers sweep, smash, FVG, neck, zone, entry cap, stop risk, NEED_DEEPER, SPIT codes, and the state machine.
 - `npm run dry-run` replays a synthetic book and writes `logs/orders.json`. The sample ETH setup is 08:00 UK, outside the old afternoon clock, and still produces a LIMIT.
-- `npm run backtest` downloads six months of MEXC 5m and 1h candles into `data/` (gitignored) and writes `logs/backtest.json`.
-- `npm start` serves the desk at http://127.0.0.1:4173 . Three pair tiles. Tap a tile for the 5m chart. The header badge is status. **Start live fires** / **Stop live fires** is the switch.
+- `npm run backtest` replays six months of MEXC 5m and 1h candles from `data/` (gitignored) and writes `logs/backtest.json`.
+- `npm run score-fixtures` scores `fixtures/fixtures.jsonl` on closed 5m candles and writes `logs/fixture-score.json`.
+- `npm start` serves the desk at http://127.0.0.1:4173 . It loads a MEXC 5m tape. Three pair tiles. Tap a tile for the chart. The header badge is status. **Start live fires** stays off.
 
 Override the port with `PORT`.
 
@@ -29,10 +30,10 @@ Override the port with `PORT`.
 
 | control | behaviour |
 | --- | --- |
-| Button off (default) | Paint, ping, append a dry-run LIMIT with reason `LIVE_OFF`. No exchange order is sent. |
+| Button off (default) | Paint the live MEXC tape, ping, and on a fresh 5m close append a dry-run LIMIT with reason `LIVE_OFF`. No exchange order is sent. |
 | **Start live fires** | Asks you to confirm, then checks `MEXC_API_KEY` and `MEXC_API_SECRET`. If either is missing, or MEXC rejects the account call, the switch stays off and nothing is sent. |
-| Button on | The next fresh 5m close can send a **LIMIT** (type 1) on MEXC with `stopLossPrice` and `takeProfitPrice`. Size is an integer contract count. A mid-bar refresh paints and does not fire. |
-| **Stop live fires** | Asks you to confirm, cancels working limits by `externalOid`, and stops further sends. |
+| Button on | The next fresh 5m close can send a **LIMIT** (type 1) on MEXC with `stopLossPrice` and `takeProfitPrice`. Size is an integer contract count. Ticker updates paint the zone and do not fire. |
+| **Stop live fires** | Asks you to confirm, cancels working limits by `externalOid`, and stops further sends. The tape keeps painting. |
 
 Live sends go to MEXC even when `active_venue` is `kucoin`. Keys are read from the environment only. They are not written into config or the order log.
 
@@ -47,6 +48,27 @@ Order type is always `LIMIT`. Client order id is `choke-v1-{pair}-{yyyymmdd}` in
 `npm run backtest` replays BTC, ETH, and SOL for about six months. Each decision uses only candles that have already closed. The limit is eligible on the next bar, not on the signal bar. A bar that trades through both the stop and the target counts as a loss. Setups that never fill, or that invalidate first, are misses and are not in the win rate. Paper pnl is quantity times the price distance. The stake is the config GBP figure with no FX conversion.
 
 The page reads `logs/backtest.json` and lists wins, losses, win rate, and net. Click a trade to see that window with FVG, BOS, MSS, entry, TP, and SL on the candles that produced them. Cached klines live in `data/` and are not committed. Set `BACKTEST_REFRESH=1` to download again.
+
+Selective replay, 25 Mar 2026 → 24 Sep 2026:
+
+| | Wins | Losses | Misses | Win rate | Net |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Book | 4 | 8 | 1 | 33.3% | +£183.98 |
+| BTCUSDT | 0 | 1 | 0 | 0% | −£35.06 |
+| ETHUSDT | 1 | 1 | 1 | 50% | +£65.37 |
+| SOLUSDT | 3 | 6 | 0 | 33.3% | +£153.66 |
+
+The previous book was 22 wins and 208 losses (9.6%). The same six months now arm 12 decided trades. Losses fell from 208 to 8.
+
+What was cut, in order:
+
+- A smash that does not close through the neck stays FORMING. That is the BOS test. It is not a new reason code.
+- Neck height under 0.30% of the sweep stays FORMING.
+- A missing gap, a 2-candle imbalance, or a 3-candle FVG under 0.08% of the sweep is `NO_FVG`.
+- A stop closer than 0.20% of entry, or a stop on the profit side of the entry, is not tagged. A fat cap in that state stays `NEED_DEEPER` and does not fill.
+- `FAKE_NECK`, `CHASE` (more than 0.4 × neck height), `NO_SWEEP`, `FAT_STOP` above 6% margin at 10x, `SECOND_ON_SAME_BOX`, `ALREADY_USED` (one arm per pair per UK day), and `DAILY_KILL` are unchanged.
+
+The locked ETH morning example still arms: entry 2650, stop 2641.99, target 2679.68.
 
 ## Config
 
@@ -93,13 +115,13 @@ Marks are placed on the candles that created them:
 - white — neck, from the sweep to the smash
 - purple — FVG box, from the first candle of the gap
 - amber — MSS, the smash candle (close back through the sweep body)
-- sky — BOS, the same smash when its close also breaks the neck
+- sky — BOS, the smash close through the neck. Without that close the smash is not complete and the pair does not arm
 - green — entry, from the bar after the smash
 - red — stop
 - blue — 1.12% target
 - grey dashed — last price when it is not inside the zone
 
-MSS and BOS are labels on the smash the engine already required. They do not add a new gate.
+MSS is the smash candle. BOS is the same candle when its close breaks the neck, and that close is now required before the smash counts.
 
 30m candles and the 1h MA5 are context. The MA5 only feeds `entry_cap`. It does not block a direction. 3m is used only when a 5m candle is missing.
 
@@ -107,18 +129,23 @@ MSS and BOS are labels on the smash the engine already required. They do not add
 
 ## Venues and pings
 
-`packages/venues` exposes one adapter interface and in-memory MEXC and KuCoin stubs. `active_venue` picks which stub the server constructs. Neither stub opens a socket.
+`packages/venues` exposes one adapter interface and in-memory MEXC and KuCoin order stubs. `active_venue` picks which stub the server constructs. Neither stub opens an order socket.
+
+The desk subscribes once to the public MEXC contract websocket (`wss://contract.mexc.com/edge`) for 5m, 1h, and last price, after a single REST backfill. Structure uses closed 5m bars only. A close older than 2 seconds does not fire. Last price updates the zone and does not arm. KuCoin has no public candle feed in this repo, so the tape is MEXC. There is no per-tick REST poll and no model call on the fire path.
 
 `packages/notify` is a `Notifier` interface plus a console and file stub (`logs/notify.log`). The same interface is where a Telegram sender would plug in. Pings debounce for five minutes per pair per state: one FORMING, one ARM, one DONE / EXPIRED / SPIT.
 
 ## Fixtures
 
-`fixtures/` is Balazs's labeled set for later paper scoring. Do not edit decisions or labels.
+`fixtures/` is Balazs's labeled set. Do not edit decisions or labels. Replace `fixtures/fixtures.jsonl` with another JSONL of the same shape and run:
 
-- `fixtures/fixtures.jsonl`
-- `fixtures/rules.json`
-- `fixtures/specialists-veto.jsonl`
-- `fixtures/specialists-veto-summary.json`
+```bash
+npm run score-fixtures
+```
+
+A row is scored only when the id contains `YYYY-MM-DD` and `entry_time_uk` is set. The clock is Europe/London. The engine sees closed 5m bars up to that bar's close, plus 1h context. It does not build a 3m or 2m series when 5m is continuous. Undated rows are listed and left unscored.
+
+The latest run fired 0 of 18 dated rows. The nine green takes are 3m or 2m labels. On 5m at the entry bar they were `FORMING`, `FAKE_NECK`, or `NO_FVG`, so they did not arm. The three hard skips also did not arm. Warn rows armed only if those same candle gates pass; in this run none did. The score is `logs/fixture-score.json`.
 
 ## Out of scope
 

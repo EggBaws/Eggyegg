@@ -15,6 +15,7 @@ import { appendOrderLog } from './dryRun.ts';
 import { holidayAt } from './holidays.ts';
 import { formatPrice, roundToTick } from './math.ts';
 import { acceptableEntry, isFatStop, marginRiskPct, positionQty, stopLoss, takeProfit } from './risk.ts';
+import { selectiveFacts, stopIsWideEnough, stopProtects } from './select.ts';
 import { initialRuntime, muteRuntime, stepPair, type PairRuntime, type SetupFacts } from './stateMachine.ts';
 import { buildChartMarks } from './marks.ts';
 import { ukClock, ukDateIso, ukDateKey, ukMidnightMs, ukStamp } from './time.ts';
@@ -250,12 +251,13 @@ export class ChokeEngine {
       config: this.config,
     });
 
+    const selective = selectiveFacts(selected.candles, structure);
     const setup: SetupFacts = {
       hasSweep: structure.sweep != null,
-      hasSmash: structure.smash != null && structure.neck?.ok === true,
-      hasFvg: structure.fvg != null,
-      neckEvaluated: structure.smash != null && structure.neck != null,
-      neckOk: structure.neck?.ok === true,
+      hasSmash: selective.hasSmash,
+      hasFvg: selective.hasFvg,
+      neckEvaluated: selective.neckEvaluated,
+      neckOk: selective.neckOk,
       invalidated: structure.invalidated,
       tagged: priced.tagged,
       chase: priced.chase,
@@ -658,16 +660,17 @@ function priceSetup(args: {
       : roundToTick(cap, tick, side === 'long' ? 'floor' : 'ceil')
     : restingLimit(side, cap, lastPrice, tick);
   const tp = takeProfit(side, entry, config.tp_price_pct, tick);
+  const tradableStop = stopProtects(side, entry, sl) && stopIsWideEnough(entry, sl);
   return {
     ...base,
     zone,
     entry,
     sl,
     tp,
-    tagged,
+    tagged: tagged && tradableStop,
     chase,
     fatStop,
-    deeperReached,
+    deeperReached: deeperReached && tradableStop,
   };
 }
 

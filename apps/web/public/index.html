@@ -50,7 +50,7 @@
         <h2>Six-month backtest</h2>
         <p id="bt-range" class="muted"></p>
       </div>
-      <p class="window-note">Walk-forward on MEXC 5m candles. A fill waits until the bar after the signal. If that bar hits both the stop and the target, it is a loss. Misses are unfilled and stay out of the win rate.</p>
+      <p class="window-note">Walk-forward on MEXC 5m candles. A fill waits until the bar after the signal. Junk is missed first: the smash must close through a neck at least 0.30% of price, with a 3-candle FVG at least 0.08%, and a stop at least 0.20% of entry. A tighter stop never fills.</p>
       <div id="bt-summary" class="stats"></div>
       <div id="bt-pairs"></div>
       <div class="table-wrap" id="bt-table"></div>
@@ -72,6 +72,7 @@
         <h2>Night review</h2>
         <div class="row">
           <button id="export" type="button">Export JSON</button>
+          <button id="tape" type="button">Live tape</button>
           <button id="replay" type="button">Replay synthetic</button>
           <button id="kill" type="button" class="danger">Kill today</button>
         </div>

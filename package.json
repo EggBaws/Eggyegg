@@ -10,6 +10,7 @@
     "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test --test-reporter=spec packages/engine/test/*.test.ts packages/venues/test/*.test.ts packages/notify/test/*.test.ts",
     "dry-run": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/dry-run.ts",
     "backtest": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/backtest.ts",
+    "score-fixtures": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/score-fixtures.ts",
     "start": "node --disable-warning=ExperimentalWarning --experimental-strip-types apps/web/server.ts"
   },
   "engines": {

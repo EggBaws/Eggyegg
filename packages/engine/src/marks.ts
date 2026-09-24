@@ -23,7 +23,7 @@ export interface MarkInput {
  * Chart labels for the same events the engine already computed.
  * MSS is the smash candle (close back through the sweep body).
  * BOS is that same displacement when it also closes through the neck.
- * Neither label changes whether a pair can arm.
+ * The engine only treats the smash as complete when that BOS close prints.
  */
 export function buildChartMarks(input: MarkInput): ChartMark[] {
   const { candles, structure } = input;

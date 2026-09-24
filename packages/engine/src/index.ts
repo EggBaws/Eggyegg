@@ -6,6 +6,7 @@ export * from './spit.ts';
 export * from './candles.ts';
 export * from './risk.ts';
 export * from './decide.ts';
+export * from './select.ts';
 export * from './stateMachine.ts';
 export * from './dryRun.ts';
 export * from './overlay.ts';

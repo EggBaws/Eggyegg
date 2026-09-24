@@ -40,10 +40,14 @@ function ukTime(ms) {
   return new Date(ms).toLocaleString('en-GB', { timeZone: 'Europe/London', hour12: false });
 }
 
-async function load() {
+async function refresh() {
   const res = await fetch('/api/state');
   snapshot = await res.json();
   render();
+}
+
+async function load() {
+  await refresh();
   await loadBacktest();
 }
 
@@ -333,6 +337,11 @@ document.querySelector('#replay').addEventListener('click', async () => {
   applyPayload(data);
 });
 
+document.querySelector('#tape').addEventListener('click', async () => {
+  const res = await fetch('/api/tape', { method: 'POST' });
+  applyPayload(await res.json());
+});
+
 document.querySelector('#kill').addEventListener('click', async () => {
   const ok = window.confirm('Cancel working limits, record a reduce-only flatten intent, and mute all three pairs for today?');
   if (!ok) return;
@@ -368,3 +377,6 @@ document.querySelector('#live-toggle').addEventListener('click', async () => {
 });
 
 load();
+setInterval(() => {
+  void refresh();
+}, 2000);
