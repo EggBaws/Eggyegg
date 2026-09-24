@@ -4,10 +4,10 @@
     "pair": "ETHUSDT",
     "side": "buy",
     "type": "LIMIT",
-    "price": 2650,
-    "qty": 3.7735849,
-    "sl": 2641.99,
-    "tp": 2679.68,
+    "price": 2650.2,
+    "qty": 3.77330012,
+    "sl": 2639.2,
+    "tp": 2679.88,
     "reduceOnlySlTp": true,
     "liveArmed": false,
     "reason": "LIVE_OFF",
@@ -16,7 +16,7 @@
     "tsUk": "2026-09-24T08:00:00.500+01:00",
     "tsMs": 1790233200500,
     "btcAligned": false,
-    "marginRiskPct": 0.030226415094340445,
+    "marginRiskPct": 0.04150630141121425,
     "leverage": 10,
     "tpPricePct": 0.0112
   }

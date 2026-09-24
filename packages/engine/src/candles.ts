@@ -1,4 +1,5 @@
 import { EPS, gte, lte } from './math.ts';
+import { patternClears } from './select.ts';
 import type { Candle, FvgBox, NeckPoint, Side, SmashPoint, Structure, SwingPoint, SweepPoint, Zone } from './types.ts';
 
 export function candle(
@@ -219,7 +220,8 @@ interface SidePattern {
 
 function patternLong(candles: Candle[], tick: number, sessionStartMs: number): SidePattern | null {
   const swings = swingLows(candles);
-  let best: SidePattern | null = null;
+  const found: SidePattern[] = [];
+  const seen = new Set<number>();
   for (const swing of swings) {
     let sweepIndex = -1;
     for (let i = swing.index + 1; i < candles.length; i++) {
@@ -230,12 +232,12 @@ function patternLong(candles: Candle[], tick: number, sessionStartMs: number): S
         break;
       }
     }
-    if (sweepIndex < 0) continue;
+    if (sweepIndex < 0 || seen.has(sweepIndex)) continue;
     if (candles[sweepIndex].time < sessionStartMs) continue;
-    const built = finishLong(candles, sweepIndex, swing, tick);
-    if (!best || built.sweep.index >= best.sweep.index) best = built;
+    seen.add(sweepIndex);
+    found.push(finishLong(candles, sweepIndex, swing, tick));
   }
-  return best;
+  return preferReady(candles, 'long', found);
 }
 
 function finishLong(
@@ -267,7 +269,8 @@ function finishLong(
 
 function patternShort(candles: Candle[], tick: number, sessionStartMs: number): SidePattern | null {
   const swings = swingHighs(candles);
-  let best: SidePattern | null = null;
+  const found: SidePattern[] = [];
+  const seen = new Set<number>();
   for (const swing of swings) {
     let sweepIndex = -1;
     for (let i = swing.index + 1; i < candles.length; i++) {
@@ -278,8 +281,9 @@ function patternShort(candles: Candle[], tick: number, sessionStartMs: number): 
         break;
       }
     }
-    if (sweepIndex < 0) continue;
+    if (sweepIndex < 0 || seen.has(sweepIndex)) continue;
     if (candles[sweepIndex].time < sessionStartMs) continue;
+    seen.add(sweepIndex);
     const sweepC = candles[sweepIndex];
     const sweep: SweepPoint = {
       index: sweepIndex,
@@ -289,20 +293,33 @@ function patternShort(candles: Candle[], tick: number, sessionStartMs: number): 
       priorSwingIndex: swing.index,
     };
     const smash = findSmashShort(candles, sweepIndex);
-    let built: SidePattern;
     if (!smash) {
-      built = { sweep, smash: null, neck: null, fvg: null, fakeNeck: false, invalidated: false };
-    } else {
-      const neck = neckShort(candles, sweepIndex, smash.index, sweep.price);
-      if (!neck.ok) {
-        built = { sweep, smash, neck, fvg: null, fakeNeck: true, invalidated: false };
-      } else {
-        const fvg = findFvgShort(candles, sweepIndex, smash.index);
-        const invalidated = fvg ? invalidatedAfter(candles, 'short', smash.index, sweep.price) : false;
-        built = { sweep, smash, neck, fvg, fakeNeck: false, invalidated };
-      }
+      found.push({ sweep, smash: null, neck: null, fvg: null, fakeNeck: false, invalidated: false });
+      continue;
     }
-    if (!best || built.sweep.index >= best.sweep.index) best = built;
+    const neck = neckShort(candles, sweepIndex, smash.index, sweep.price);
+    if (!neck.ok) {
+      found.push({ sweep, smash, neck, fvg: null, fakeNeck: true, invalidated: false });
+      continue;
+    }
+    const fvg = findFvgShort(candles, sweepIndex, smash.index);
+    const invalidated = fvg ? invalidatedAfter(candles, 'short', smash.index, sweep.price) : false;
+    found.push({ sweep, smash, neck, fvg, fakeNeck: false, invalidated });
+  }
+  return preferReady(candles, 'short', found);
+}
+
+/**
+ * Keep the latest choke that clears the size floors.
+ * A later 1-tick sweep no longer hides that choke. If none clear, the latest sweep still paints.
+ */
+function preferReady(candles: Candle[], side: Side, found: SidePattern[]): SidePattern | null {
+  if (!found.length) return null;
+  const ready = found.filter((pattern) => !pattern.invalidated && patternClears(candles, side, pattern));
+  const pool = ready.length ? ready : found;
+  let best = pool[0];
+  for (const pattern of pool) {
+    if (pattern.sweep.index >= best.sweep.index) best = pattern;
   }
   return best;
 }

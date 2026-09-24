@@ -8,8 +8,8 @@ const FIVE = 5 * 60_000;
  * Clock is 08:00 UK on 24 Sep 2026 — outside the retired 13:30 window — and must still arm.
  *
  * Sweep wick 2639.21 undercuts swing 2645.
- * FVG lower 2650 is the entry cap (below 1h MA5 2700 and below the sweep/smash midpoint).
- * Later tighter wick 2642 → SL 2641.99. TP = 2650 * 1.0112 = 2679.68.
+ * First touch of the FVG is 2654, but the live price is 2650.20 so the limit rests there.
+ * Stop is one tick past the sweep wick: 2639.20. TP = 2650.20 * 1.0112 = 2679.88.
  */
 export const ETH_T0 = Date.parse('2026-09-24T06:00:00.000Z');
 

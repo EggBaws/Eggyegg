@@ -74,16 +74,17 @@ describe('selective gates', () => {
     assert.equal(readOrderLog(join(dir, 'orders.json')).length, 0);
   });
 
-  it('leaves a tight stop untagged so it cannot fill', async () => {
+  it('keeps the stop on the sweep wick when a later candle trades inside it', async () => {
     const candles = ethLongCandles();
     const mid = candles[9];
     candles[9] = candle(mid.time, 2648, 2651, 2647, 2649);
     const dir = mkdtempSync(join(tmpdir(), 'choke-'));
+    const log = join(dir, 'orders.json');
     const engine = new ChokeEngine({
       config,
       venue: venue(),
       notifier: quiet(),
-      dryRunPath: join(dir, 'orders.json'),
+      dryRunPath: log,
     });
     const book = demoBook();
     const eth = book.updates.find((u) => u.pair === 'ETHUSDT');
@@ -91,19 +92,24 @@ describe('selective gates', () => {
     eth.candles5m = candles;
     const snap = await engine.runBook(book.updates);
     const view = snap.pairs.find((p) => p.pair === 'ETHUSDT');
-    assert.equal(view?.state, 'WAIT_RETRACE');
-    assert.equal(readOrderLog(join(dir, 'orders.json')).length, 0);
+    assert.equal(view?.state, 'WORKING');
+    const orders = readOrderLog(log);
+    assert.equal(orders.length, 1);
+    const order = orders[0];
+    if (!order || !('sl' in order)) throw new Error('expected order');
+    assert.equal(order.sl, 2639.2);
   });
 
-  it('treats a 2-candle gap as NO_FVG once the neck has actually broken', () => {
+  it('counts a 2-candle gap once it has height, and rejects a stop inside 0.15%', () => {
     const candles = ethLongCandles();
     const structure = detectStructure(candles, 0.01, ukMidnightMs(ethNowMs()), '5m');
     assert.equal(structure.fvg?.kind, '3candle');
-    const tiny = structure.fvg
-      ? { ...structure.fvg, kind: '2candle' as const, lower: structure.fvg.lower, upper: structure.fvg.lower + 20 }
+    const two = structure.fvg
+      ? { ...structure.fvg, kind: '2candle' as const, lower: structure.fvg.lower, upper: structure.fvg.lower + 4 }
       : null;
-    assert.equal(fvgIsTradable(tiny, structure.sweep?.price ?? 0), false);
-    assert.equal(fvgIsTradable(structure.fvg, 1_000_000), false);
+    assert.equal(fvgIsTradable(two, structure.sweep?.price ?? 0), true);
+    assert.equal(fvgIsTradable(null, structure.sweep?.price ?? 0), false);
+    assert.equal(stopIsWideEnough(100, 99.9), false);
   });
 
   it('still arms the untouched ETH book', async () => {

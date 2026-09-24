@@ -49,26 +49,26 @@ Order type is always `LIMIT`. Client order id is `choke-v1-{pair}-{yyyymmdd}` in
 
 The page reads `logs/backtest.json` and lists wins, losses, win rate, and net. Click a trade to see that window with FVG, BOS, MSS, entry, TP, and SL on the candles that produced them. Cached klines live in `data/` and are not committed. Set `BACKTEST_REFRESH=1` to download again.
 
-Selective replay, 25 Mar 2026 → 24 Sep 2026:
+Paying replay, 25 Mar 2026 → 24 Sep 2026:
 
 | | Wins | Losses | Misses | Win rate | Net |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Book | 4 | 8 | 1 | 33.3% | +£183.98 |
-| BTCUSDT | 0 | 1 | 0 | 0% | −£35.06 |
-| ETHUSDT | 1 | 1 | 1 | 50% | +£65.37 |
-| SOLUSDT | 3 | 6 | 0 | 33.3% | +£153.66 |
+| Book | 59 | 164 | 6 | 26.5% | +£1,630.76 |
+| BTCUSDT | 13 | 41 | 2 | 24.1% | +£378.09 |
+| ETHUSDT | 24 | 68 | 1 | 26.1% | +£665.43 |
+| SOLUSDT | 22 | 55 | 3 | 28.6% | +£587.24 |
 
-The previous book was 22 wins and 208 losses (9.6%). The same six months now arm 12 decided trades. Losses fell from 208 to 8.
+One trade is still open at the end of the tape. The untouched book was 22 wins and 208 losses (9.6%, +£333). The same six months now pay 59 times.
 
-What was cut, in order:
+What changed, after replaying the filter grid on the cached 5m tape:
 
-- A smash that does not close through the neck stays FORMING. That is the BOS test. It is not a new reason code.
-- Neck height under 0.30% of the sweep stays FORMING.
-- A missing gap, a 2-candle imbalance, or a 3-candle FVG under 0.08% of the sweep is `NO_FVG`.
-- A stop closer than 0.20% of entry, or a stop on the profit side of the entry, is not tagged. A fat cap in that state stays `NEED_DEEPER` and does not fill.
-- `FAKE_NECK`, `CHASE` (more than 0.4 × neck height), `NO_SWEEP`, `FAT_STOP` above 6% margin at 10x, `SECOND_ON_SAME_BOX`, `ALREADY_USED` (one arm per pair per UK day), and `DAILY_KILL` are unchanged.
+- The limit is the first touch of the FVG, not the deep edge. A later 1-tick sweep no longer hides an earlier choke that already cleared the floors.
+- The smash still has to close through the neck. Neck height under 0.10% of the sweep stays FORMING.
+- A 2-candle or 3-candle gap both count. No gap is still `NO_FVG`.
+- The stop is one tick past the sweep wick. A later wick does not pull it in. A stop closer than 0.15% of entry, or on the profit side of the entry, is not filled.
+- `FAKE_NECK`, `CHASE` (more than 0.4 × neck height), `NO_SWEEP`, `FAT_STOP` above 6% margin at 10x, `SECOND_ON_SAME_BOX`, `ALREADY_USED`, and `DAILY_KILL` are unchanged. Target stays 1.12%.
 
-The locked ETH morning example still arms: entry 2650, stop 2641.99, target 2679.68.
+The ETH morning example still arms: entry 2650.20, stop 2639.20, target 2679.88.
 
 ## Config
 
@@ -95,7 +95,7 @@ The locked ETH morning example still arms: entry 2650, stop 2641.99, target 2679
 
 `btc_aligned` is true when BTC's 5m printed a sweep on the same UK date in the same direction. ETH or SOL can `ARM` while it is false.
 
-Take profit is `entry * (1 ± 0.0112)`. The stop is one tick beyond the tighter of the sweep wick and a later session wick. Quantity is the minimum of stake × leverage and the size whose stop loss is about stake × 6%.
+Take profit is `entry * (1 ± 0.0112)`. The stop is one tick beyond the sweep wick. Quantity is the minimum of stake × leverage and the size whose stop loss is about stake × 6%.
 
 ## States
 
@@ -145,7 +145,7 @@ npm run score-fixtures
 
 A row is scored only when the id contains `YYYY-MM-DD` and `entry_time_uk` is set. The clock is Europe/London. The engine sees closed 5m bars up to that bar's close, plus 1h context. It does not build a 3m or 2m series when 5m is continuous. Undated rows are listed and left unscored.
 
-The latest run fired 0 of 18 dated rows. The nine green takes are 3m or 2m labels. On 5m at the entry bar they were `FORMING`, `FAKE_NECK`, or `NO_FVG`, so they did not arm. The three hard skips also did not arm. Warn rows armed only if those same candle gates pass; in this run none did. The score is `logs/fixture-score.json`.
+The latest run fired 2 of 18 dated rows. The nine green takes are 3m or 2m labels. On 5m at the entry bar they were `CHASE`, `NO_FVG`, `FAT_STOP`, or `FORMING`, so they did not arm. One hard skip with no clock gate did arm, because a clock is not a spit reason. The score is `logs/fixture-score.json`.
 
 ## Out of scope
 

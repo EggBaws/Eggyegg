@@ -65,14 +65,14 @@ describe('engine dry-run', () => {
     assert.ok(eth?.levels.some((l) => l.label === 'zone' && l.color === 'green'));
     assert.ok(eth?.levels.some((l) => l.label === 'SL' && l.color === 'red'));
     assert.ok(eth?.levels.some((l) => l.label === 'TP' && l.color === 'blue'));
-    assert.ok(eth?.levels.some((l) => l.label === 'NOW' && l.color === 'grey' && l.dashed));
+    assert.equal(eth?.levels.some((l) => l.label === 'NOW'), false);
     const kinds = new Set((eth?.marks ?? []).map((m) => m.kind));
     for (const kind of ['FVG', 'MSS', 'BOS', 'ENTRY', 'TP', 'SL']) {
       assert.ok(kinds.has(kind as 'FVG'), `missing ${kind}`);
     }
-    assert.equal(eth?.marks.find((m) => m.kind === 'ENTRY')?.price, 2650);
-    assert.equal(eth?.marks.find((m) => m.kind === 'SL')?.price, 2641.99);
-    assert.equal(eth?.marks.find((m) => m.kind === 'TP')?.price, 2679.68);
+    assert.equal(eth?.marks.find((m) => m.kind === 'ENTRY')?.price, 2650.2);
+    assert.equal(eth?.marks.find((m) => m.kind === 'SL')?.price, 2639.2);
+    assert.equal(eth?.marks.find((m) => m.kind === 'TP')?.price, 2679.88);
     assert.equal(eth?.marks.find((m) => m.kind === 'FVG')?.price, 2650);
 
     const orders = readOrderLog(log);
@@ -82,9 +82,9 @@ describe('engine dry-run', () => {
     if (!('price' in order) || !('clientOrderId' in order)) throw new Error('expected order');
     assert.equal(order.clientOrderId, 'choke-v1-ETHUSDT-20260924');
     assert.equal(order.side, 'buy');
-    assert.equal(order.price, 2650);
-    assert.equal(order.sl, 2641.99);
-    assert.equal(order.tp, 2679.68);
+    assert.equal(order.price, 2650.2);
+    assert.equal(order.sl, 2639.2);
+    assert.equal(order.tp, 2679.88);
     assert.equal(order.reduceOnlySlTp, true);
     assert.equal(order.liveArmed, false);
     assert.equal(order.reason, 'LIVE_OFF');

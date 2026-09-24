@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-09-24T18:11:53.907Z",
+  "generatedAt": "2026-09-24T18:46:51.396Z",
   "note": "Labels in fixtures/fixtures.jsonl were not edited. Undated rows stay unscored. 3m and 2m takes are judged on 5m.",
-  "fired": 0,
+  "fired": 2,
   "scored": 18,
   "rows": [
     {
@@ -11,10 +11,10 @@
       "pair": "SOL",
       "tf": "3m",
       "entryUk": "13:36",
-      "state": "FORMING",
-      "reason": null,
+      "state": "SPIT",
+      "reason": "CHASE",
       "fired": false,
-      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Green take did not arm on 5m (FORMING). Left unfired rather than relaxing the gates."
+      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Green take did not arm on 5m (SPIT CHASE). Left unfired rather than relaxing the gates."
     },
     {
       "id": "fx-2025-11-25-sol-short-main",
@@ -24,9 +24,9 @@
       "tf": "3m",
       "entryUk": "17:54",
       "state": "SPIT",
-      "reason": "FAKE_NECK",
+      "reason": "CHASE",
       "fired": false,
-      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Green take did not arm on 5m (SPIT FAKE_NECK). Left unfired rather than relaxing the gates."
+      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Green take did not arm on 5m (SPIT CHASE). Left unfired rather than relaxing the gates."
     },
     {
       "id": "fx-2025-11-25-fake-move-skip",
@@ -48,9 +48,9 @@
       "tf": "3m",
       "entryUk": "14:06",
       "state": "SPIT",
-      "reason": "NO_FVG",
+      "reason": "CHASE",
       "fired": false,
-      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Green take did not arm on 5m (SPIT NO_FVG). Left unfired rather than relaxing the gates."
+      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Green take did not arm on 5m (SPIT CHASE). Left unfired rather than relaxing the gates."
     },
     {
       "id": "fx-2025-11-12-sol-short-1400",
@@ -71,10 +71,10 @@
       "pair": "SOL",
       "tf": "2m",
       "entryUk": "13:54",
-      "state": "FORMING",
-      "reason": null,
+      "state": "NEED_DEEPER",
+      "reason": "FAT_STOP",
       "fired": false,
-      "note": "Label is 2m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Green take did not arm on 5m (FORMING). Left unfired rather than relaxing the gates."
+      "note": "Label is 2m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Green take did not arm on 5m (NEED_DEEPER FAT_STOP). Left unfired rather than relaxing the gates."
     },
     {
       "id": "fx-2025-weekend-sol-short-fri-ob",
@@ -107,10 +107,10 @@
       "pair": "ETH",
       "tf": "3m",
       "entryUk": "13:00",
-      "state": "SPIT",
-      "reason": "FAKE_NECK",
-      "fired": false,
-      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Warn row did not arm (SPIT FAKE_NECK)."
+      "state": "WORKING",
+      "reason": "LIVE_OFF",
+      "fired": true,
+      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Warn row armed only because the hard candle gates passed."
     },
     {
       "id": "fx-2026-04-21-sol-short-brake-acc",
@@ -120,9 +120,9 @@
       "tf": "3m",
       "entryUk": "13:00",
       "state": "SPIT",
-      "reason": "NO_FVG",
+      "reason": "CHASE",
       "fired": false,
-      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Warn row did not arm (SPIT NO_FVG)."
+      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Warn row did not arm (SPIT CHASE)."
     },
     {
       "id": "fx-2026-04-24-sol-long-friday",
@@ -167,10 +167,10 @@
       "pair": "ETH",
       "tf": "5m",
       "entryUk": "06:05",
-      "state": "FORMING",
-      "reason": null,
+      "state": "SPIT",
+      "reason": "NO_FVG",
       "fired": false,
-      "note": "Scored on 5m. Warn row did not arm (FORMING)."
+      "note": "Scored on 5m. Warn row did not arm (SPIT NO_FVG)."
     },
     {
       "id": "fx-2026-01-23-sol-long-mss-fvg",
@@ -251,10 +251,10 @@
       "pair": "SOL",
       "tf": "3m",
       "entryUk": "12:42",
-      "state": "SPIT",
-      "reason": "FAKE_NECK",
-      "fired": false,
-      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Hard-skip did not arm (SPIT FAKE_NECK)."
+      "state": "WORKING",
+      "reason": "LIVE_OFF",
+      "fired": true,
+      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Hard-skip label still armed because the candle gates passed. A clock is not a spit reason."
     },
     {
       "id": "fx-2026-01-28-sol-short-fvg-acc",

@@ -15,7 +15,7 @@ import { appendOrderLog } from './dryRun.ts';
 import { holidayAt } from './holidays.ts';
 import { formatPrice, roundToTick } from './math.ts';
 import { acceptableEntry, isFatStop, marginRiskPct, positionQty, stopLoss, takeProfit } from './risk.ts';
-import { selectiveFacts, stopIsWideEnough, stopProtects } from './select.ts';
+import { selectProfile, selectiveFacts, stopIsWideEnough, stopProtects } from './select.ts';
 import { initialRuntime, muteRuntime, stepPair, type PairRuntime, type SetupFacts } from './stateMachine.ts';
 import { buildChartMarks } from './marks.ts';
 import { ukClock, ukDateIso, ukDateKey, ukMidnightMs, ukStamp } from './time.ts';
@@ -640,14 +640,20 @@ function priceSetup(args: {
     return base;
   }
   const side = structure.side;
+  const mode = selectProfile().entryAnchor;
+  const anchor = fvgAnchor(side, structure.fvg.lower, structure.fvg.upper, mode);
   const cap =
-    side === 'long'
-      ? entryCapLong(h1Ma5, structure.sweep.price, structure.smash.extreme, structure.fvg.lower)
-      : entryCapShort(h1Ma5, structure.sweep.price, structure.smash.extreme, structure.fvg.upper);
-  const edge = side === 'long' ? structure.fvg.lower : structure.fvg.upper;
-  const structural = zoneFromEdges(edge, cap);
+    mode === 'far'
+      ? side === 'long'
+        ? entryCapLong(h1Ma5, structure.sweep.price, structure.smash.extreme, structure.fvg.lower)
+        : entryCapShort(h1Ma5, structure.sweep.price, structure.smash.extreme, structure.fvg.upper)
+      : anchor;
+  const structural =
+    mode === 'far'
+      ? zoneFromEdges(side === 'long' ? structure.fvg.lower : structure.fvg.upper, cap)
+      : zoneFromEdges(structure.fvg.lower, structure.fvg.upper);
   const zone = clipZone(side, structural, lastPrice);
-  const later = laterExtremeWick(side, candles, structure.sweep.index);
+  const later = selectProfile().tighterWick ? laterExtremeWick(side, candles, structure.sweep.index) : null;
   const sl = stopLoss(side, structure.sweep.price, later, tick);
   const acceptable = acceptableEntry(side, sl, config.leverage, config.max_margin_risk);
   const fatStop = isFatStop(side, cap, sl, config.leverage, config.max_margin_risk);
@@ -672,6 +678,12 @@ function priceSetup(args: {
     fatStop,
     deeperReached: deeperReached && tradableStop,
   };
+}
+
+function fvgAnchor(side: Side, lower: number, upper: number, mode: 'far' | 'near' | 'mid'): number {
+  if (mode === 'mid') return (lower + upper) / 2;
+  if (mode === 'near') return side === 'long' ? upper : lower;
+  return side === 'long' ? lower : upper;
 }
 
 function restingLimit(side: Side, entryCap: number, last: number, tick: number): number {
