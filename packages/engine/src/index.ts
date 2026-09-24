@@ -11,4 +11,6 @@ export * from './dryRun.ts';
 export * from './overlay.ts';
 export * from './config.ts';
 export * from './synthetic.ts';
+export * from './marks.ts';
+export * from './backtest.ts';
 export * from './engine.ts';

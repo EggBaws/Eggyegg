@@ -151,5 +151,12 @@ describe('state machine', () => {
 
     const other = stepPair(closed.runtime, input({}, { boxId: 'long:2', side: 'short' }));
     assert.equal(other.runtime.reason, 'ALREADY_USED');
+
+    const nextDay = stepPair(
+      other.runtime,
+      input({ nowMs: Date.parse('2026-09-25T07:00:00.500Z') }, { boxId: 'long:3' }),
+    );
+    assert.equal(nextDay.runtime.state, 'WORKING');
+    assert.equal(nextDay.runtime.armsToday, 1);
   });
 });

@@ -77,6 +77,18 @@ h1 { font-size: 1.6rem; }
 .red { color: #f87171; }
 .blue { color: #60a5fa; }
 .grey { color: #94a3b8; }
+.amber { color: #fbbf24; }
+.sky { color: #38bdf8; }
+.live-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 8px 0 4px; }
+.live-bar button.armed { background: #3a1212; border-color: #a33; }
+.stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 12px; }
+.stat { background: #12180f; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+.stat b { display: block; font-size: 1.2rem; font-variant-numeric: tabular-nums; }
+.win { color: #4ade80; }
+.loss { color: #f87171; }
+.table-wrap { overflow-x: auto; }
+tr.click { cursor: pointer; }
+tr.click[aria-pressed="true"] { background: #243024; }
 canvas { width: 100%; height: auto; background: #0c100c; border-radius: 8px; }
 pre {
   white-space: pre-wrap;

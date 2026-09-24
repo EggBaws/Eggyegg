@@ -18,20 +18,35 @@ npm start
 
 - `npm test` covers sweep, smash, FVG, neck, zone, entry cap, stop risk, NEED_DEEPER, SPIT codes, and the state machine.
 - `npm run dry-run` replays a synthetic book and writes `logs/orders.json`. The sample ETH setup is 08:00 UK, outside the old afternoon clock, and still produces a LIMIT.
-- `npm start` serves the desk at http://127.0.0.1:4173 . Three pair tiles. Tap a tile for the 5m overlay. The header badge is status only — it is not a switch.
+- `npm run backtest` downloads six months of MEXC 5m and 1h candles into `data/` (gitignored) and writes `logs/backtest.json`.
+- `npm start` serves the desk at http://127.0.0.1:4173 . Three pair tiles. Tap a tile for the 5m chart. The header badge is status. **Start live fires** / **Stop live fires** is the switch.
 
 Override the port with `PORT`.
 
 ## LIVE_ARMED
 
-Set `live_armed` in `config/default.json`.
+`live_armed` in `config/default.json` still defaults to **false**. The desk button is what turns a real send on and off for this process.
 
-| value | behaviour |
+| control | behaviour |
 | --- | --- |
-| `false` (default) | Paint, ping, append a dry-run LIMIT with reason `LIVE_OFF`. Venue `place` is not called. |
-| `true` | Same LIMIT, then the active venue stub attaches reduce-only SL and TP. If the stop cannot attach, the limit is cancelled and the pair goes `BLOCKED`. |
+| Button off (default) | Paint, ping, append a dry-run LIMIT with reason `LIVE_OFF`. No exchange order is sent. |
+| **Start live fires** | Asks you to confirm, then checks `MEXC_API_KEY` and `MEXC_API_SECRET`. If either is missing, or MEXC rejects the account call, the switch stays off and nothing is sent. |
+| Button on | The next fresh 5m close can send a **LIMIT** (type 1) on MEXC with `stopLossPrice` and `takeProfitPrice`. Size is an integer contract count. A mid-bar refresh paints and does not fire. |
+| **Stop live fires** | Asks you to confirm, cancels working limits by `externalOid`, and stops further sends. |
+
+Live sends go to MEXC even when `active_venue` is `kucoin`. Keys are read from the environment only. They are not written into config or the order log.
+
+```bash
+MEXC_API_KEY=... MEXC_API_SECRET=... npm start
+```
 
 Order type is always `LIMIT`. Client order id is `choke-v1-{pair}-{yyyymmdd}` in Europe/London. Example: `choke-v1-ETHUSDT-20260924`.
+
+## Backtest
+
+`npm run backtest` replays BTC, ETH, and SOL for about six months. Each decision uses only candles that have already closed. The limit is eligible on the next bar, not on the signal bar. A bar that trades through both the stop and the target counts as a loss. Setups that never fill, or that invalidate first, are misses and are not in the win rate. Paper pnl is quantity times the price distance. The stake is the config GBP figure with no FX conversion.
+
+The page reads `logs/backtest.json` and lists wins, losses, win rate, and net. Click a trade to see that window with FVG, BOS, MSS, entry, TP, and SL on the candles that produced them. Cached klines live in `data/` and are not committed. Set `BACKTEST_REFRESH=1` to download again.
 
 ## Config
 
@@ -72,15 +87,19 @@ Kill on the desk asks for confirmation, cancels a working limit, records a reduc
 
 ## Chart
 
-Overlay colours come from the engine levels, not from the page:
+Marks are placed on the candles that created them:
 
-- orange — sweep wick
-- white — neck
-- purple — FVG / acceptance box
-- green — buy or sell zone
+- orange — sweep wick, from the sweep forward
+- white — neck, from the sweep to the smash
+- purple — FVG box, from the first candle of the gap
+- amber — MSS, the smash candle (close back through the sweep body)
+- sky — BOS, the same smash when its close also breaks the neck
+- green — entry, from the bar after the smash
 - red — stop
 - blue — 1.12% target
 - grey dashed — last price when it is not inside the zone
+
+MSS and BOS are labels on the smash the engine already required. They do not add a new gate.
 
 30m candles and the 1h MA5 are context. The MA5 only feeds `entry_cap`. It does not block a direction. 3m is used only when a 5m candle is missing.
 
@@ -103,4 +122,4 @@ Overlay colours come from the engine levels, not from the page:
 
 ## Out of scope
 
-Live API keys, discretionary AI, grids, scale-in, and flipping the same pair on the same day.
+Discretionary AI, grids, scale-in, and flipping the same pair on the same day. Live MEXC sends exist only behind the start button, and only as LIMIT orders with a stop and a target.

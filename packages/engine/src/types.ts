@@ -156,4 +156,6 @@ export interface MarketUpdate {
   candles30m?: Candle[];
   lastPrice: number;
   nowMs: number;
+  /** Chart refresh between 5m closes. Structure can paint; the close is not a fresh fire. */
+  forceStale?: boolean;
 }

@@ -16,8 +16,9 @@ import { holidayAt } from './holidays.ts';
 import { formatPrice, roundToTick } from './math.ts';
 import { acceptableEntry, isFatStop, marginRiskPct, positionQty, stopLoss, takeProfit } from './risk.ts';
 import { initialRuntime, muteRuntime, stepPair, type PairRuntime, type SetupFacts } from './stateMachine.ts';
+import { buildChartMarks } from './marks.ts';
 import { ukClock, ukDateIso, ukDateKey, ukMidnightMs, ukStamp } from './time.ts';
-import type { AppConfig, Candle, MarketUpdate, OrderDraft, PairId, Side, VenueId, Zone } from './types.ts';
+import type { AppConfig, Candle, MarketUpdate, OrderDraft, OrderLogEntry, PairId, Side, VenueId, Zone } from './types.ts';
 import { buildLevels, inZone, reviewOf, stampLine, type PairOverlay } from './overlay.ts';
 
 export interface LimitRequest {
@@ -35,12 +36,19 @@ export interface LimitRequest {
 export interface VenuePort {
   readonly id: VenueId;
   health(): { ok: boolean; reason?: string };
-  placeLimitWithProtection(req: LimitRequest): {
-    ok: boolean;
-    orderId?: string;
-    cancelledBecauseSlFailed?: boolean;
-    error?: string;
-  };
+  placeLimitWithProtection(req: LimitRequest):
+    | {
+        ok: boolean;
+        orderId?: string;
+        cancelledBecauseSlFailed?: boolean;
+        error?: string;
+      }
+    | Promise<{
+        ok: boolean;
+        orderId?: string;
+        cancelledBecauseSlFailed?: boolean;
+        error?: string;
+      }>;
 }
 
 export interface NotifyEvent {
@@ -63,6 +71,8 @@ export interface EngineOptions {
   dryRunPath: string;
   fillsToday?: number;
   dailyPnlGbp?: number;
+  /** Backtest and tests that must not touch logs/orders.json. */
+  skipOrderLog?: boolean;
 }
 
 interface BtcMemo {
@@ -94,13 +104,16 @@ const PING_STATES = new Set(['FORMING', 'ARM', 'NEED_DEEPER', 'DONE', 'EXPIRED',
 
 export class ChokeEngine {
   private readonly config: AppConfig;
-  private readonly venue: VenuePort;
+  private venue: VenuePort;
   private readonly notifier: NotifierPort;
   private readonly dryRunPath: string;
+  private readonly skipOrderLog: boolean;
   private records = new Map<PairId, PairRecord>();
   private btc: BtcMemo | null = null;
   private fillsToday: number;
   private dailyPnlGbp: number;
+  private bookDay: string | null = null;
+  private liveArmed: boolean;
   private venueCalls = 0;
 
   constructor(opts: EngineOptions) {
@@ -108,6 +121,8 @@ export class ChokeEngine {
     this.venue = opts.venue;
     this.notifier = opts.notifier;
     this.dryRunPath = opts.dryRunPath;
+    this.skipOrderLog = opts.skipOrderLog === true;
+    this.liveArmed = opts.config.live_armed;
     this.fillsToday = opts.fillsToday ?? 0;
     this.dailyPnlGbp = opts.dailyPnlGbp ?? 0;
     for (const pair of opts.config.pairs) {
@@ -126,6 +141,53 @@ export class ChokeEngine {
     return this.venueCalls;
   }
 
+  isLiveArmed(): boolean {
+    return this.liveArmed;
+  }
+
+  setLiveArmed(on: boolean): void {
+    this.liveArmed = on;
+    for (const [pair, rec] of this.records) {
+      this.records.set(pair, { ...rec, view: { ...rec.view, liveArmed: on } });
+    }
+  }
+
+  setVenue(venue: VenuePort): void {
+    this.venue = venue;
+  }
+
+  workingOrders(): { pair: PairId; clientOrderId: string }[] {
+    const out: { pair: PairId; clientOrderId: string }[] = [];
+    for (const rec of this.records.values()) {
+      if (rec.runtime.state === 'WORKING' && rec.runtime.order) {
+        out.push({ pair: rec.runtime.pair, clientOrderId: rec.runtime.order.clientOrderId });
+      }
+    }
+    return out;
+  }
+
+  /** Paper pnl for the UK day of `nowMs`. A new day clears the book kill counters. */
+  realizePnl(pnl: number, nowMs: number): void {
+    this.rollBook(nowMs);
+    this.dailyPnlGbp += pnl;
+  }
+
+  /**
+   * Drop a resting limit that never filled. The arm still counts for the day.
+   * Used when a backtest session ends, and when live fires are stopped.
+   */
+  releaseUnfilled(pair: PairId, nowMs: number, reason: string): void {
+    const rec = this.must(pair);
+    if (rec.runtime.state !== 'WORKING') return;
+    const runtime = { ...rec.runtime, state: 'FLAT' as const, reason, order: null };
+    this.records.set(pair, {
+      ...rec,
+      runtime,
+      view: { ...rec.view, state: 'FLAT', reason, review: reviewOf('FLAT') },
+      nowMs,
+    });
+  }
+
   runtime(pair: PairId): PairRuntime {
     return this.must(pair).runtime;
   }
@@ -134,7 +196,7 @@ export class ChokeEngine {
     const now = nowMs ?? this.latestNow();
     const holiday = holidayAt(now);
     return {
-      liveArmed: this.config.live_armed,
+      liveArmed: this.liveArmed,
       activeVenue: this.config.active_venue,
       timezone: 'Europe/London',
       window: 'disabled',
@@ -146,17 +208,17 @@ export class ChokeEngine {
     };
   }
 
-  runBook(updates: MarketUpdate[]): BookSnapshot {
+  async runBook(updates: MarketUpdate[]): Promise<BookSnapshot> {
     const ordered = [...updates].sort((a, b) => (a.pair === 'BTCUSDT' ? -1 : b.pair === 'BTCUSDT' ? 1 : 0));
     let now = 0;
     for (const u of ordered) {
-      this.ingest(u);
+      await this.ingest(u);
       now = u.nowMs;
     }
     return this.snapshot(now);
   }
 
-  ingest(update: MarketUpdate): PairOverlay {
+  async ingest(update: MarketUpdate): Promise<PairOverlay> {
     const tick = this.config.ticks[update.pair];
     const selected = selectStructureCandles(update.candles5m, update.candles3m);
     const sessionStart = ukMidnightMs(update.nowMs);
@@ -171,10 +233,13 @@ export class ChokeEngine {
     const holiday = holidayAt(update.nowMs);
     const health = this.venue.health();
     const dailyKill = this.dailyPnlGbp <= -this.config.stake_gbp * this.config.max_margin_risk;
+    this.rollBook(update.nowMs);
     const lastClosed = [...selected.candles].reverse().find((c) => c.closed);
-    const stale = lastClosed
-      ? update.nowMs - (lastClosed.time + tfMs(selected.timeframe)) > this.config.stale_close_ms
-      : true;
+    const stale =
+      update.forceStale === true ||
+      (lastClosed
+        ? update.nowMs - (lastClosed.time + tfMs(selected.timeframe)) > this.config.stale_close_ms
+        : true);
 
     const priced = priceSetup({
       candles: selected.candles,
@@ -198,7 +263,7 @@ export class ChokeEngine {
       deeperReached: priced.deeperReached,
       displacementWithoutSweep: structure.displacementWithoutSweep,
       venueHealthy: health.ok,
-      liveArmed: this.config.live_armed,
+      liveArmed: this.liveArmed,
       dailyKill,
       stale,
       holiday: holiday.active,
@@ -225,11 +290,16 @@ export class ChokeEngine {
     });
 
     let runtime = stepped.runtime;
-    if (stepped.order && !this.config.live_armed) {
-      appendOrderLog(this.dryRunPath, stepped.order);
-    } else if (stepped.order && this.config.live_armed) {
+    if (stepped.order && !this.liveArmed) {
+      this.logOrder(stepped.order);
+    } else if (stepped.order && this.liveArmed) {
       this.venueCalls += 1;
-      const placed = this.venue.placeLimitWithProtection(stepped.order);
+      let placed: { ok: boolean; orderId?: string; cancelledBecauseSlFailed?: boolean; error?: string };
+      try {
+        placed = await Promise.resolve(this.venue.placeLimitWithProtection(stepped.order));
+      } catch {
+        placed = { ok: false, error: 'VENUE_UNHEALTHY' };
+      }
       if (!placed.ok) {
         runtime = {
           ...runtime,
@@ -248,7 +318,7 @@ export class ChokeEngine {
             },
           ],
         };
-        appendOrderLog(this.dryRunPath, {
+        this.logOrder({
           action: 'cancel',
           clientOrderId: stepped.order.clientOrderId,
           pair: update.pair,
@@ -260,17 +330,17 @@ export class ChokeEngine {
           tsMs: update.nowMs,
         });
       } else {
-        appendOrderLog(this.dryRunPath, { ...stepped.order, mode: 'live', reason: 'LIVE', liveArmed: true });
+        this.logOrder({ ...stepped.order, mode: 'live', reason: 'LIVE', liveArmed: true });
       }
     }
     if (stepped.cancel && rec.runtime.order) {
-      appendOrderLog(this.dryRunPath, {
+      this.logOrder({
         action: 'cancel',
         clientOrderId: rec.runtime.order.clientOrderId,
         pair: update.pair,
         type: 'LIMIT',
         reason: 'INVALIDATED',
-        mode: this.config.live_armed ? 'live' : 'dry-run',
+        mode: this.liveArmed ? 'live' : 'dry-run',
         venue: this.config.active_venue,
         tsUk: ukStamp(update.nowMs),
         tsMs: update.nowMs,
@@ -278,7 +348,7 @@ export class ChokeEngine {
     }
 
     this.emitPings(update.pair, update.nowMs, stepped.entered, runtime.lastPing, stepped.holidayPing);
-    const view = this.makeView(update, selected.candles, selected.timeframe, structure.side, btcAligned, priced, runtime, h1Ma5);
+    const view = this.makeView(update, selected.candles, selected.timeframe, structure, btcAligned, priced, runtime, h1Ma5);
     this.records.set(update.pair, {
       runtime,
       view,
@@ -290,6 +360,7 @@ export class ChokeEngine {
   }
 
   markClosed(pair: PairId, nowMs: number): void {
+    this.rollBook(nowMs);
     const rec = this.must(pair);
     if (rec.runtime.state !== 'WORKING' || !rec.lastSetup) return;
     const stepped = stepPair(rec.runtime, {
@@ -317,25 +388,25 @@ export class ChokeEngine {
       const rec = this.must(pair);
       const stepped = muteRuntime(rec.runtime, nowMs, rec.lastPrice);
       if (stepped.cancel && rec.runtime.order) {
-        appendOrderLog(this.dryRunPath, {
+        this.logOrder({
           action: 'cancel',
           clientOrderId: rec.runtime.order.clientOrderId,
           pair,
           type: 'LIMIT',
           reason: 'KILL',
-          mode: this.config.live_armed ? 'live' : 'dry-run',
+          mode: this.liveArmed ? 'live' : 'dry-run',
           venue: this.config.active_venue,
           tsUk: ukStamp(nowMs),
           tsMs: nowMs,
         });
-        appendOrderLog(this.dryRunPath, {
+        this.logOrder({
           action: 'flatten-intent',
           clientOrderId: rec.runtime.order.clientOrderId,
           pair,
           type: 'LIMIT',
           price: rec.lastPrice,
           reason: 'KILL',
-          mode: this.config.live_armed ? 'live' : 'dry-run',
+          mode: this.liveArmed ? 'live' : 'dry-run',
           venue: this.config.active_venue,
           tsUk: ukStamp(nowMs),
           tsMs: nowMs,
@@ -366,7 +437,7 @@ export class ChokeEngine {
     tp: number,
     btcAligned: boolean,
   ): OrderDraft {
-    const live = this.config.live_armed;
+    const live = this.liveArmed;
     return {
       clientOrderId: `choke-v1-${update.pair}-${ukDateKey(update.nowMs)}`,
       pair: update.pair,
@@ -422,16 +493,34 @@ export class ChokeEngine {
     }
   }
 
+  private logOrder(entry: OrderLogEntry): void {
+    if (this.skipOrderLog) return;
+    appendOrderLog(this.dryRunPath, entry);
+  }
+
+  private rollBook(nowMs: number): void {
+    const day = ukDateKey(nowMs);
+    if (this.bookDay === null) {
+      this.bookDay = day;
+      return;
+    }
+    if (this.bookDay === day) return;
+    this.bookDay = day;
+    this.fillsToday = 0;
+    this.dailyPnlGbp = 0;
+  }
+
   private makeView(
     update: MarketUpdate,
     candles: Candle[],
     timeframe: '5m' | '3m',
-    side: Side | null,
+    structure: ReturnType<typeof detectStructure>,
     btcAligned: boolean,
     priced: Priced,
     runtime: PairRuntime,
     h1Ma5: number | null,
   ): PairOverlay {
+    const side = structure.side;
     const zone = priced.zone;
     const inside = inZone(update.lastPrice, zone);
     const tick = this.config.ticks[update.pair];
@@ -455,7 +544,7 @@ export class ChokeEngine {
       reason: runtime.reason,
       side,
       btcAligned,
-      liveArmed: this.config.live_armed,
+      liveArmed: this.liveArmed,
       zone,
       sl: priced.sl,
       tp: priced.tp,
@@ -484,6 +573,14 @@ export class ChokeEngine {
         tp: priced.tp,
         lastPrice: update.lastPrice,
         inZone: inside,
+      }),
+      marks: buildChartMarks({
+        candles,
+        structure,
+        entry: priced.entry,
+        sl: priced.sl,
+        tp: priced.tp,
+        neck: priced.neck,
       }),
     };
   }
@@ -647,5 +744,6 @@ function emptyView(pair: PairId, config: AppConfig): PairOverlay {
     context30m: 'display-only',
     h1Ma5: null,
     levels: [],
+    marks: [],
   };
 }

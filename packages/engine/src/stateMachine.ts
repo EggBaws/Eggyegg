@@ -115,8 +115,8 @@ export function stepPair(runtime: PairRuntime, input: StepInput): StepResult {
     return { runtime: rt, order: null, cancel: false, entered, holidayPing };
   }
 
-  if (input.setup.boxId && rt.boxId && input.setup.boxId !== rt.boxId && rt.state !== 'FLAT') {
-    rt = move(rt, 'FLAT', 'NEW_BOX', input, entered, null);
+  if (input.setup.boxId && rt.boxId && input.setup.boxId !== rt.boxId) {
+    if (rt.state !== 'FLAT') rt = move(rt, 'FLAT', 'NEW_BOX', input, entered, null);
     rt = { ...rt, consumed: false };
   }
 

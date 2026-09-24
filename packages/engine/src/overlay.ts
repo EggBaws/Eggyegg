@@ -1,4 +1,5 @@
 import { formatPrice } from './math.ts';
+import type { ChartMark } from './marks.ts';
 import { ukClock } from './time.ts';
 import type { Candle, PairId, Side, State, Zone } from './types.ts';
 
@@ -38,6 +39,7 @@ export interface PairOverlay {
   context30m: 'display-only';
   h1Ma5: number | null;
   levels: OverlayLevel[];
+  marks: ChartMark[];
 }
 
 export function reviewOf(state: State): PairOverlay['review'] {

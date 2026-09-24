@@ -19,7 +19,7 @@ const engine = new ChokeEngine({
   dryRunPath: dryPath,
 });
 
-const snap = engine.runBook(demoBook().updates);
+const snap = await engine.runBook(demoBook().updates);
 const orders = readOrderLog(dryPath);
 
 console.log(`LIVE_ARMED=${String(config.live_armed)} venue=${config.active_venue} window=disabled`);

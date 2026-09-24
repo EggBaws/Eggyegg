@@ -37,14 +37,14 @@ describe('engine dry-run', () => {
   const root = findRepoRoot();
   const config = loadConfig(join(root, 'config/default.json'));
 
-  it('writes a LIMIT dry-run for the morning ETH setup and does not call the venue', () => {
+  it('writes a LIMIT dry-run for the morning ETH setup and does not call the venue', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'choke-'));
     const log = join(dir, 'orders.json');
     const note = memoryNotifier();
     const vx = venue('kucoin');
     const engine = new ChokeEngine({ config, venue: vx, notifier: note, dryRunPath: log });
     const book = demoBook();
-    const snap = engine.runBook(book.updates);
+    const snap = await engine.runBook(book.updates);
     assert.equal(config.live_armed, false);
     assert.equal(snap.window, 'disabled');
     assert.equal(snap.liveArmed, false);
@@ -66,6 +66,14 @@ describe('engine dry-run', () => {
     assert.ok(eth?.levels.some((l) => l.label === 'SL' && l.color === 'red'));
     assert.ok(eth?.levels.some((l) => l.label === 'TP' && l.color === 'blue'));
     assert.ok(eth?.levels.some((l) => l.label === 'NOW' && l.color === 'grey' && l.dashed));
+    const kinds = new Set((eth?.marks ?? []).map((m) => m.kind));
+    for (const kind of ['FVG', 'MSS', 'BOS', 'ENTRY', 'TP', 'SL']) {
+      assert.ok(kinds.has(kind as 'FVG'), `missing ${kind}`);
+    }
+    assert.equal(eth?.marks.find((m) => m.kind === 'ENTRY')?.price, 2650);
+    assert.equal(eth?.marks.find((m) => m.kind === 'SL')?.price, 2641.99);
+    assert.equal(eth?.marks.find((m) => m.kind === 'TP')?.price, 2679.68);
+    assert.equal(eth?.marks.find((m) => m.kind === 'FVG')?.price, 2650);
 
     const orders = readOrderLog(log);
     assert.equal(orders.length, 1);
@@ -87,12 +95,12 @@ describe('engine dry-run', () => {
     assert.ok(note.events.includes('ARM:ETHUSDT'));
     assert.ok(note.events.includes('FORMING:SOLUSDT'));
 
-    engine.runBook(book.updates);
+    await engine.runBook(book.updates);
     assert.equal(readOrderLog(log).length, 1);
     assert.equal(engine.runtime('ETHUSDT').state, 'WORKING');
   });
 
-  it('still arms on Christmas and only warns', () => {
+  it('still arms on Christmas and only warns', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'choke-'));
     const engine = new ChokeEngine({
       config,
@@ -101,7 +109,7 @@ describe('engine dry-run', () => {
       dryRunPath: join(dir, 'orders.json'),
     });
     const xmas = Date.parse('2026-12-25T06:00:00.000Z');
-    const snap = engine.runBook(demoBook(xmas).updates);
+    const snap = await engine.runBook(demoBook(xmas).updates);
     const eth = snap.pairs.find((p) => p.pair === 'ETHUSDT');
     assert.equal(snap.holiday.active, true);
     assert.equal(eth?.state, 'WORKING');
@@ -111,13 +119,13 @@ describe('engine dry-run', () => {
     assert.equal(order.clientOrderId, 'choke-v1-ETHUSDT-20261225');
   });
 
-  it('calls the armed venue and blocks when the stop cannot attach', () => {
+  it('calls the armed venue and blocks when the stop cannot attach', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'choke-'));
     const log = join(dir, 'orders.json');
     const live = { ...config, live_armed: true as const };
     const vx = venue('kucoin', true);
     const engine = new ChokeEngine({ config: live, venue: vx, notifier: memoryNotifier(), dryRunPath: log });
-    engine.runBook(demoBook(ETH_T0).updates);
+    await engine.runBook(demoBook(ETH_T0).updates);
     assert.equal(engine.venuePlaceCalls, 1);
     assert.equal(vx.calls, 1);
     assert.equal(engine.runtime('ETHUSDT').state, 'BLOCKED');
@@ -125,5 +133,23 @@ describe('engine dry-run', () => {
     const entries = readOrderLog(log);
     assert.equal(entries.length, 1);
     assert.equal('action' in entries[0] && entries[0].action, 'cancel');
+  });
+
+  it('paints a stale refresh without writing an order', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'choke-'));
+    const log = join(dir, 'orders.json');
+    const engine = new ChokeEngine({
+      config,
+      venue: venue('kucoin'),
+      notifier: memoryNotifier(),
+      dryRunPath: log,
+    });
+    const updates = demoBook().updates.map((u) => ({ ...u, forceStale: true }));
+    const snap = await engine.runBook(updates);
+    const eth = snap.pairs.find((p) => p.pair === 'ETHUSDT');
+    assert.notEqual(eth?.state, 'WORKING');
+    assert.equal(engine.venuePlaceCalls, 0);
+    assert.equal(readOrderLog(log).length, 0);
+    assert.ok((eth?.marks ?? []).some((m) => m.kind === 'FVG'));
   });
 });

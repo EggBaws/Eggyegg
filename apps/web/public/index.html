@@ -19,7 +19,11 @@
       </div>
     </header>
     <p id="holiday" class="holiday" hidden></p>
-    <p class="window-note">Fire window off — detection runs all day. Status badge only; arming stays a config flag.</p>
+    <div class="live-bar">
+      <button id="live-toggle" type="button">Start live fires</button>
+      <p id="live-note" class="muted">Live fires are off. Starting sends LIMIT orders with a stop and a target to your MEXC account. Market orders are never sent.</p>
+    </div>
+    <p class="window-note">Fire window off — detection runs all day. The badge is status. The button is the only live switch, and it stays off until you confirm.</p>
     <section id="tiles" class="tiles" aria-label="Pairs"></section>
     <section id="detail" class="detail" hidden>
       <div class="detail-head">
@@ -30,7 +34,9 @@
         <span class="swatch orange">sweep</span>
         <span class="swatch white">neck</span>
         <span class="swatch purple">FVG</span>
-        <span class="swatch green">zone</span>
+        <span class="swatch amber">MSS</span>
+        <span class="swatch sky">BOS</span>
+        <span class="swatch green">ENTRY</span>
         <span class="swatch red">SL</span>
         <span class="swatch blue">TP</span>
         <span class="swatch grey">NOW</span>
@@ -38,6 +44,28 @@
       <canvas id="chart" width="960" height="420"></canvas>
       <pre id="stamp"></pre>
       <p id="ping" class="ping"></p>
+    </section>
+    <section class="review" id="backtest-panel">
+      <div class="detail-head">
+        <h2>Six-month backtest</h2>
+        <p id="bt-range" class="muted"></p>
+      </div>
+      <p class="window-note">Walk-forward on MEXC 5m candles. A fill waits until the bar after the signal. If that bar hits both the stop and the target, it is a loss. Misses are unfilled and stay out of the win rate.</p>
+      <div id="bt-summary" class="stats"></div>
+      <div id="bt-pairs"></div>
+      <div class="table-wrap" id="bt-table"></div>
+      <div id="bt-detail" hidden>
+        <h3 id="bt-title">Trade</h3>
+        <div class="legend" aria-hidden="true">
+          <span class="swatch purple">FVG</span>
+          <span class="swatch amber">MSS</span>
+          <span class="swatch sky">BOS</span>
+          <span class="swatch green">ENTRY</span>
+          <span class="swatch red">SL</span>
+          <span class="swatch blue">TP</span>
+        </div>
+        <canvas id="bt-chart" width="960" height="420"></canvas>
+      </div>
     </section>
     <section class="review">
       <div class="detail-head">
