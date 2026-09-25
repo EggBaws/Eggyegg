@@ -24,6 +24,22 @@ npm start
 
 Override the port with `PORT`.
 
+## Sign-in and keys
+
+The desk is closed until Google sign-in succeeds. Only one account can open it. The default is `pigpunkcoin@gmail.com`. Set `GOOGLE_ALLOWED_EMAIL` to lock it to a different address. `email_verified` is required. A session cookie is `HttpOnly` and `SameSite=Lax`, and it is `Secure` when the desk is behind HTTPS. The cookie holds a random id, not the email and not the exchange keys. Sessions live in memory, so a restart signs every screen out.
+
+Phone and laptop each get their own cookie and the same desk. Pair, timeframe, and the open backtest trade follow the latest change. Chart zoom stays on the screen that set it. Market data, the book, and the live switch are already one process, so both screens paint the same tape.
+
+Create a Google OAuth client of type **Web application**. Put the client id in `GOOGLE_CLIENT_ID`. Add authorized JavaScript origins for every URL you open, for example `http://127.0.0.1:4173` and `http://192.168.1.20:4173`. No client secret is stored. The server checks the ID token against Google's published keys.
+
+Exchange keys typed into the page are encrypted with AES-256-GCM and written to `data/mexc-keys.enc` (mode `0600`). That directory is gitignored. The encryption key is `KEY_SECRET` from the environment, not a file next to the ciphertext. The page never reads the saved values back. A missing or wrong `KEY_SECRET` leaves the file locked. If no file has been saved, `MEXC_API_KEY` and `MEXC_API_SECRET` are still accepted. Saved keys take priority. Nothing in the order log or the API responses contains the key or the secret.
+
+```bash
+GOOGLE_CLIENT_ID=....apps.googleusercontent.com KEY_SECRET=$(openssl rand -base64 32) npm start
+```
+
+Keep `KEY_SECRET` somewhere you control outside this repo. Losing it means typing the exchange keys again. Do not put the desk on the public internet. A private LAN address or Tailscale is the intended reach.
+
 ## LIVE_ARMED
 
 `live_armed` in `config/default.json` still defaults to **false**. The desk button is what turns a real send on and off for this process.
@@ -31,15 +47,11 @@ Override the port with `PORT`.
 | control | behaviour |
 | --- | --- |
 | Button off (default) | Paint the live MEXC tape, ping, and on a fresh 5m close append a dry-run LIMIT with reason `LIVE_OFF`. No exchange order is sent. |
-| **Start live fires** | Asks you to confirm, then checks `MEXC_API_KEY` and `MEXC_API_SECRET`. If either is missing, or MEXC rejects the account call, the switch stays off and nothing is sent. |
+| **Start live fires** | Asks you to confirm, then uses saved keys, or the environment keys if none are saved. If neither is available, or MEXC rejects the account call, the switch stays off and nothing is sent. |
 | Button on | The next fresh 5m close can send a **LIMIT** (type 1) on MEXC with `stopLossPrice` and `takeProfitPrice`. Size is an integer contract count. Ticker updates paint the zone and do not fire. |
 | **Stop live fires** | Asks you to confirm, cancels working limits by `externalOid`, and stops further sends. The tape keeps painting. |
 
-Live sends go to MEXC even when `active_venue` is `kucoin`. Keys are read from the environment only. They are not written into config or the order log.
-
-```bash
-MEXC_API_KEY=... MEXC_API_SECRET=... npm start
-```
+Live sends go to MEXC even when `active_venue` is `kucoin`. Keys are not written into config or the order log.
 
 Order type is always `LIMIT`. Client order id is `choke-v1-{pair}-{yyyymmdd}` in Europe/London. Example: `choke-v1-ETHUSDT-20260924`.
 

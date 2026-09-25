@@ -3,8 +3,13 @@ const liveChart = mountChart(document.querySelector('#live-canvas'));
 const tradeChart = mountChart(document.querySelector('#bt-chart'));
 let snapshot = null;
 let livePair = 'BTCUSDT';
+let liveTf = 1;
 let backtest = null;
 let selectedTrade = null;
+let viewRev = 0;
+let quiet = false;
+let pollTimer = 0;
+let googleMounted = false;
 
 function money(n) {
   if (n == null || Number.isNaN(n)) return '—';
@@ -27,9 +32,28 @@ function ukTime(ms) {
   return new Date(ms).toLocaleString('en-GB', { timeZone: 'Europe/London', hour12: false });
 }
 
+function stopPoll() {
+  if (!pollTimer) return;
+  clearInterval(pollTimer);
+  pollTimer = 0;
+}
+
+function startPoll() {
+  if (pollTimer) return;
+  pollTimer = setInterval(() => {
+    void refresh();
+  }, 2000);
+}
+
 async function refresh() {
   const res = await fetch('/api/state');
+  if (res.status === 401) {
+    showGate();
+    return;
+  }
+  if (!res.ok) return;
   snapshot = await res.json();
+  applyRemoteView(snapshot.view);
   render();
   await loadLiveChart();
 }
@@ -37,10 +61,16 @@ async function refresh() {
 async function load() {
   await refresh();
   await loadBacktest();
+  await loadKeys();
+  if (selectedTrade) showTrade(selectedTrade, false);
 }
 
 async function loadBacktest() {
   const res = await fetch('/api/backtest');
+  if (res.status === 401) {
+    showGate();
+    return;
+  }
   backtest = await res.json();
   renderBacktest();
 }
@@ -151,11 +181,16 @@ function selectLive(pair) {
   livePair = pair;
   render();
   document.querySelector('#live-chart').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  publishView();
   void loadLiveChart();
 }
 
 async function loadLiveChart() {
   const res = await fetch(`/api/chart?pair=${livePair}`);
+  if (res.status === 401) {
+    showGate();
+    return;
+  }
   if (!res.ok) return;
   const data = await res.json();
   liveChart.setSeries(data.candles, data.marks, data.barMs);
@@ -171,30 +206,83 @@ async function loadLiveChart() {
   document.querySelector('#stamp').textContent = data.stamp || '';
 }
 
-function openTrade(id) {
+function showTrade(id, scroll) {
   selectedTrade = id;
-  const trade = backtest.trades.find((t) => t.id === id);
   const panel = document.querySelector('#bt-detail');
+  if (!id) {
+    panel.hidden = true;
+    if (backtest) renderBacktest();
+    return;
+  }
+  const trade = backtest?.trades?.find((t) => t.id === id);
+  if (!trade) return;
   panel.hidden = false;
   renderBacktest();
-  if (!trade) return;
   document.querySelector('#bt-title').textContent = `${trade.pair} ${trade.side} ${trade.outcome} · ${ukTime(trade.entryTime)} · entry ${money(trade.entry)} · ${gbp(trade.pnlGbp)}`;
   tradeChart.setSeries(trade.candles, trade.marks, 300_000);
+  tradeChart.setTimeframe(liveTf);
   tradeChart.fit();
-  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (scroll) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function bindTimeframes(root, chart) {
+function openTrade(id) {
+  showTrade(id, true);
+  publishView();
+}
+
+function pressTf(root, mult) {
+  for (const item of root.querySelectorAll('button')) {
+    item.setAttribute('aria-pressed', String(Number(item.dataset.tf) === mult));
+  }
+}
+
+function setTimeframe(mult, publish) {
+  liveTf = mult;
+  liveChart.setTimeframe(mult);
+  tradeChart.setTimeframe(mult);
+  pressTf(document.querySelector('#live-tfs'), mult);
+  pressTf(document.querySelector('#bt-tfs'), mult);
+  const title = document.querySelector('#live-title');
+  if (title.textContent.includes('·')) title.textContent = title.textContent.replace(/· \S+ ·/, `· ${liveChart.label()} ·`);
+  if (publish) publishView();
+}
+
+function applyRemoteView(view) {
+  if (!view || view.rev === viewRev) return;
+  viewRev = view.rev;
+  quiet = true;
+  const pairChanged = view.pair && view.pair !== livePair;
+  if (view.pair) livePair = view.pair;
+  if (view.timeframe && view.timeframe !== liveTf) setTimeframe(view.timeframe, false);
+  const nextTrade = view.tradeId ?? null;
+  const tradeChanged = nextTrade !== selectedTrade;
+  if (tradeChanged) showTrade(nextTrade, false);
+  quiet = false;
+  if (pairChanged && snapshot) render();
+}
+
+function publishView() {
+  if (quiet) return;
+  void fetch('/api/session/view', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pair: livePair, timeframe: liveTf, tradeId: selectedTrade }),
+  }).then(async (res) => {
+    if (res.status === 401) {
+      showGate();
+      return;
+    }
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.view && data.view.rev >= viewRev) viewRev = data.view.rev;
+  });
+}
+
+function bindTimeframes(root) {
   root.addEventListener('click', (event) => {
     const btn = event.target.closest('button');
     if (!btn?.dataset.tf) return;
-    for (const item of root.querySelectorAll('button')) item.setAttribute('aria-pressed', 'false');
-    btn.setAttribute('aria-pressed', 'true');
-    chart.setTimeframe(Number(btn.dataset.tf));
-    if (chart === liveChart) {
-      const title = document.querySelector('#live-title');
-      title.textContent = title.textContent.replace(/· \S+ ·/, `· ${chart.label()} ·`);
-    }
+    setTimeframe(Number(btn.dataset.tf), true);
   });
 }
 
@@ -205,19 +293,106 @@ function escapeHtml(s) {
 function applyPayload(data) {
   if (data?.state?.pairs) snapshot = data.state;
   else if (data?.pairs) snapshot = data;
+  if (snapshot?.view) applyRemoteView(snapshot.view);
   if (data?.message) document.querySelector('#live-note').textContent = data.message;
   if (data?.error) document.querySelector('#live-note').textContent = data.error;
   render();
   void loadLiveChart();
 }
 
-bindTimeframes(document.querySelector('#live-tfs'), liveChart);
-bindTimeframes(document.querySelector('#bt-tfs'), tradeChart);
+function showDesk(email) {
+  document.body.classList.remove('locked');
+  const account = document.querySelector('#account');
+  account.textContent = `${email} · one session on every signed-in screen`;
+  startPoll();
+  void load();
+}
+
+function showGate() {
+  document.body.classList.add('locked');
+  stopPoll();
+  const note = document.querySelector('#gate-note');
+  if (googleMounted) return;
+  googleMounted = true;
+  void fetch('/api/auth/config')
+    .then((res) => res.json())
+    .then((cfg) => {
+      if (!cfg.clientId) {
+        note.textContent = 'Sign-in is not configured. Set GOOGLE_CLIENT_ID and restart. The desk stays closed until then.';
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.onload = () => {
+        google.accounts.id.initialize({
+          client_id: cfg.clientId,
+          callback: (response) => {
+            void signIn(response.credential);
+          },
+        });
+        google.accounts.id.renderButton(document.querySelector('#google-btn'), {
+          theme: 'filled_black',
+          size: 'large',
+          text: 'signin_with',
+          shape: 'rectangular',
+        });
+      };
+      script.onerror = () => {
+        note.textContent = 'Google sign-in did not load. The desk stays closed.';
+      };
+      document.head.appendChild(script);
+    })
+    .catch(() => {
+      note.textContent = 'Sign-in is unavailable. The desk stays closed.';
+    });
+}
+
+async function signIn(credential) {
+  const note = document.querySelector('#gate-note');
+  const res = await fetch('/api/auth/google', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ credential }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    note.textContent = data.error || 'Sign-in failed.';
+    return;
+  }
+  showDesk(data.email);
+}
+
+async function loadKeys() {
+  const res = await fetch('/api/keys');
+  if (!res.ok) return;
+  const data = await res.json();
+  const status = document.querySelector('#keys-status');
+  if (data.error) {
+    status.textContent = data.error;
+    return;
+  }
+  if (data.source === 'saved') status.textContent = 'Saved keys are on this machine. The values are not shown.';
+  else if (data.source === 'environment') status.textContent = 'Using keys from the environment. Saving here replaces them for this desk.';
+  else status.textContent = 'No keys stored. Live fires stay off until you save keys or set them in the environment.';
+}
+
+function clearKeyInputs() {
+  document.querySelector('#key-id').value = '';
+  document.querySelector('#key-secret').value = '';
+}
+
+bindTimeframes(document.querySelector('#live-tfs'));
+bindTimeframes(document.querySelector('#bt-tfs'));
 document.querySelector('#live-fit').addEventListener('click', () => liveChart.fit());
 document.querySelector('#bt-fit').addEventListener('click', () => tradeChart.fit());
 
 document.querySelector('#export').addEventListener('click', async () => {
   const res = await fetch('/api/review');
+  if (res.status === 401) {
+    showGate();
+    return;
+  }
   const data = await res.json();
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -229,12 +404,20 @@ document.querySelector('#export').addEventListener('click', async () => {
 
 document.querySelector('#replay').addEventListener('click', async () => {
   const res = await fetch('/api/replay', { method: 'POST' });
+  if (res.status === 401) {
+    showGate();
+    return;
+  }
   const data = await res.json();
   applyPayload(data);
 });
 
 document.querySelector('#tape').addEventListener('click', async () => {
   const res = await fetch('/api/tape', { method: 'POST' });
+  if (res.status === 401) {
+    showGate();
+    return;
+  }
   applyPayload(await res.json());
 });
 
@@ -246,6 +429,10 @@ document.querySelector('#kill').addEventListener('click', async () => {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ confirm: 'FLATTEN' }),
   });
+  if (res.status === 401) {
+    showGate();
+    return;
+  }
   applyPayload(await res.json());
 });
 
@@ -259,6 +446,10 @@ document.querySelector('#live-toggle').addEventListener('click', async () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ confirm: 'START_LIVE' }),
     });
+    if (res.status === 401) {
+      showGate();
+      return;
+    }
     applyPayload(await res.json());
     return;
   }
@@ -269,10 +460,56 @@ document.querySelector('#live-toggle').addEventListener('click', async () => {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ confirm: 'STOP_LIVE' }),
   });
+  if (res.status === 401) {
+    showGate();
+    return;
+  }
   applyPayload(await res.json());
 });
 
-load();
-setInterval(() => {
-  void refresh();
-}, 2000);
+document.querySelector('#sign-out').addEventListener('click', async () => {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  snapshot = null;
+  showGate();
+});
+
+document.querySelector('#keys-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const apiKey = document.querySelector('#key-id').value.trim();
+  const apiSecret = document.querySelector('#key-secret').value.trim();
+  const res = await fetch('/api/keys', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ apiKey, apiSecret }),
+  });
+  clearKeyInputs();
+  if (res.status === 401) {
+    showGate();
+    return;
+  }
+  const data = await res.json();
+  if (!res.ok) {
+    document.querySelector('#keys-status').textContent = data.error || 'Keys were not stored.';
+    return;
+  }
+  await loadKeys();
+});
+
+document.querySelector('#keys-remove').addEventListener('click', async () => {
+  const res = await fetch('/api/keys', { method: 'DELETE' });
+  clearKeyInputs();
+  if (res.status === 401) {
+    showGate();
+    return;
+  }
+  await loadKeys();
+});
+
+void fetch('/api/auth/me').then(async (res) => {
+  if (!res.ok) {
+    showGate();
+    return;
+  }
+  const data = await res.json();
+  showDesk(data.email);
+});

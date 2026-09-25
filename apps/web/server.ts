@@ -15,6 +15,20 @@ import {
   type MexcTape,
   type TapeEvent,
 } from '../../packages/venues/src/index.ts';
+import {
+  allowedAccountEmail,
+  applyDeskView,
+  clearSessionCookie,
+  cookieIsSecure,
+  createRateLimit,
+  createSessionStore,
+  emptyDeskView,
+  originAllowed,
+  publicAuthConfig,
+  verifyGoogleIdToken,
+  type DeskView,
+} from './auth.ts';
+import { keyStatus, readKeyFile, removeKeyFile, saveKeyFile, validKeyMaterial, type StoredKeys } from './secrets.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '../..');
@@ -72,24 +86,89 @@ const TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
 };
+const BODY_LIMIT = 8192;
+const keyPath = join(root, 'data/mexc-keys.enc');
+const sessions = createSessionStore();
+const loginLimit = createRateLimit({ limit: 8, windowMs: 15 * 60 * 1000 });
+let deskView: DeskView = emptyDeskView();
+const SECURITY: Record<string, string> = {
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'no-referrer',
+  'x-frame-options': 'DENY',
+  'content-security-policy': [
+    "default-src 'self'",
+    "script-src 'self' https://accounts.google.com",
+    "frame-src https://accounts.google.com",
+    "connect-src 'self'",
+    "style-src 'self'",
+    "img-src 'self' data:",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; '),
+  'cross-origin-opener-policy': 'same-origin-allow-popups',
+  'cross-origin-resource-policy': 'same-origin',
+  'cache-control': 'no-store',
+};
 
 function enqueue(job: () => Promise<void>): void {
   chain = chain.then(job, job);
 }
 
-function sendJson(res: ServerResponse, body: unknown, status = 200): void {
+function sendJson(res: ServerResponse, body: unknown, status = 200, extra?: Record<string, string>): void {
   const raw = JSON.stringify(body);
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...SECURITY, ...extra });
   res.end(raw);
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => chunks.push(c));
+    let size = 0;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > BODY_LIMIT) {
+        reject(new Error('BODY_LIMIT'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
+}
+
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const raw = await readBody(req);
+  if (!raw) return {};
+  const parsed: unknown = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  return parsed as Record<string, unknown>;
+}
+
+function headerValue(req: IncomingMessage, name: string): string {
+  const value = req.headers[name];
+  if (Array.isArray(value)) return value[0] ?? '';
+  return value ?? '';
+}
+
+function requestSecure(req: IncomingMessage): boolean {
+  return cookieIsSecure({ forwardedProto: headerValue(req, 'x-forwarded-proto') });
+}
+
+function resolveTradingKeys(): { keys: StoredKeys | null; source: 'saved' | 'environment' | 'none'; error?: string } {
+  if (existsSync(keyPath)) {
+    const passphrase = process.env.KEY_SECRET ?? '';
+    if (!passphrase) return { keys: null, source: 'none', error: 'KEY_SECRET is not set. Saved keys stay locked.' };
+    const opened = readKeyFile(keyPath, passphrase);
+    if (!opened) return { keys: null, source: 'none', error: 'Saved keys could not be opened.' };
+    return { keys: opened, source: 'saved' };
+  }
+  const apiKey = process.env.MEXC_API_KEY ?? '';
+  const apiSecret = process.env.MEXC_API_SECRET ?? '';
+  if (apiKey && apiSecret) return { keys: { apiKey, apiSecret }, source: 'environment' };
+  return { keys: null, source: 'none' };
 }
 
 function publicState(message?: string) {
@@ -99,6 +178,7 @@ function publicState(message?: string) {
     feed: mode,
     liveVenue: engine.isLiveArmed() ? 'mexc' : null,
     message: message ?? tapeMessage,
+    view: deskView,
   };
 }
 
@@ -311,7 +391,61 @@ async function cancelWorking(): Promise<{ failed: string[]; cancelled: number }>
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+  const method = req.method ?? 'GET';
   try {
+    if (method === 'POST' && !originAllowed({
+      origin: headerValue(req, 'origin'),
+      host: headerValue(req, 'host'),
+      secFetchSite: headerValue(req, 'sec-fetch-site'),
+    })) {
+      sendJson(res, { error: 'Cross-site request blocked.' }, 403);
+      return;
+    }
+    if (method === 'GET' && url.pathname === '/api/auth/config') {
+      sendJson(res, publicAuthConfig(process.env.GOOGLE_CLIENT_ID));
+      return;
+    }
+    if (method === 'POST' && url.pathname === '/api/auth/google') {
+      const ip = req.socket.remoteAddress ?? 'local';
+      if (!loginLimit(ip)) {
+        sendJson(res, { error: 'Too many sign-in attempts. Wait and try again.' }, 429);
+        return;
+      }
+      const client = publicAuthConfig(process.env.GOOGLE_CLIENT_ID);
+      if (!client.configured || !client.clientId) {
+        sendJson(res, { error: 'Sign-in is not configured.' }, 503);
+        return;
+      }
+      const body = await readJson(req);
+      const credential = typeof body.credential === 'string' ? body.credential : '';
+      const verdict = await verifyGoogleIdToken(credential, {
+        clientId: client.clientId,
+        allowedEmail: allowedAccountEmail(process.env.GOOGLE_ALLOWED_EMAIL),
+      });
+      if (!verdict.ok) {
+        sendJson(res, { error: 'Sign-in failed.' }, 401);
+        return;
+      }
+      const issued = sessions.issue(verdict.email, requestSecure(req));
+      sendJson(res, { email: verdict.email }, 200, { 'set-cookie': issued.setCookie });
+      return;
+    }
+    if (method === 'POST' && url.pathname === '/api/auth/logout') {
+      sessions.revoke(req.headers.cookie);
+      sendJson(res, { ok: true }, 200, { 'set-cookie': clearSessionCookie(requestSecure(req)) });
+      return;
+    }
+    if (url.pathname.startsWith('/api/')) {
+      const session = sessions.read(req.headers.cookie);
+      if (!session) {
+        sendJson(res, { error: 'Sign in required.' }, 401);
+        return;
+      }
+      if (method === 'GET' && url.pathname === '/api/auth/me') {
+        sendJson(res, { email: session.email });
+        return;
+      }
+    }
     if (req.method === 'GET' && url.pathname === '/api/state') {
       sendJson(res, publicState());
       return;
@@ -354,6 +488,44 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
+    if (req.method === 'GET' && url.pathname === '/api/keys') {
+      const resolved = resolveTradingKeys();
+      sendJson(res, keyStatus(resolved.source, resolved.error));
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/keys') {
+      const passphrase = process.env.KEY_SECRET ?? '';
+      if (!passphrase) {
+        sendJson(res, { error: 'Set KEY_SECRET before saving keys. Nothing was stored.' }, 400);
+        return;
+      }
+      const body = await readJson(req);
+      const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+      const apiSecret = typeof body.apiSecret === 'string' ? body.apiSecret.trim() : '';
+      if (!validKeyMaterial(apiKey) || !validKeyMaterial(apiSecret)) {
+        sendJson(res, { error: 'Keys were rejected. Nothing was stored.' }, 400);
+        return;
+      }
+      saveKeyFile(keyPath, { apiKey, apiSecret }, passphrase);
+      sendJson(res, keyStatus('saved'));
+      return;
+    }
+    if (req.method === 'DELETE' && url.pathname === '/api/keys') {
+      removeKeyFile(keyPath);
+      const resolved = resolveTradingKeys();
+      sendJson(res, keyStatus(resolved.source));
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/session/view') {
+      const body = await readJson(req);
+      deskView = applyDeskView(deskView, {
+        pair: body.pair,
+        timeframe: body.timeframe,
+        tradeId: body.tradeId === null ? null : body.tradeId,
+      });
+      sendJson(res, { view: deskView });
+      return;
+    }
     if (req.method === 'POST' && url.pathname === '/api/tape') {
       if (engine.isLiveArmed()) {
         sendJson(res, { error: 'Stop live fires before loading the tape.' }, 409);
@@ -364,17 +536,28 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/live/start') {
-      const raw = await readBody(req);
-      const body = raw ? (JSON.parse(raw) as { confirm?: string }) : {};
-      const apiKey = process.env.MEXC_API_KEY ?? '';
-      const apiSecret = process.env.MEXC_API_SECRET ?? '';
-      if (!apiKey || !apiSecret || body.confirm !== 'START_LIVE') {
-        const gate = liveArmGate({ confirm: body.confirm ?? '', apiKey, apiSecret, accountOk: false });
-        sendJson(res, { ok: false, liveArmed: false, message: gate.message, state: publicState(gate.message) }, 400);
+      const body = await readJson(req);
+      const confirm = typeof body.confirm === 'string' ? body.confirm : '';
+      const resolved = resolveTradingKeys();
+      const apiKey = resolved.keys?.apiKey ?? '';
+      const apiSecret = resolved.keys?.apiSecret ?? '';
+      if (resolved.error || !apiKey || !apiSecret || confirm !== 'START_LIVE') {
+        const gate = liveArmGate({ confirm, apiKey, apiSecret, accountOk: false });
+        const message = resolved.error
+          ? `${resolved.error} Nothing was sent.`
+          : !apiKey || !apiSecret
+            ? 'No MEXC keys are available. Save them on this desk or set them in the environment. Nothing was sent.'
+            : gate.message;
+        sendJson(res, { ok: false, liveArmed: false, message, state: publicState(message) }, 400);
         return;
       }
       liveVenue = createMexcLive({ apiKey, apiSecret, leverage: config.leverage });
-      const accountOk = await liveVenue.pingAccount();
+      let accountOk = false;
+      try {
+        accountOk = await liveVenue.pingAccount();
+      } catch {
+        accountOk = false;
+      }
       const gate = liveArmGate({ confirm: 'START_LIVE', apiKey, apiSecret, accountOk });
       if (!gate.arm || !liveVenue) {
         liveVenue = null;
@@ -397,9 +580,9 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/live/stop') {
-      const raw = await readBody(req);
-      const body = raw ? (JSON.parse(raw) as { confirm?: string }) : {};
-      const gate = liveStopGate(body.confirm ?? '');
+      const body = await readJson(req);
+      const confirm = typeof body.confirm === 'string' ? body.confirm : '';
+      const gate = liveStopGate(confirm);
       if (!gate.stop) {
         sendJson(res, { ok: false, liveArmed: engine.isLiveArmed(), message: gate.message, state: publicState(gate.message) }, 400);
         return;
@@ -417,8 +600,7 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/kill') {
-      const raw = await readBody(req);
-      const body = raw ? (JSON.parse(raw) as { confirm?: string }) : {};
+      const body = await readJson(req);
       if (body.confirm !== 'FLATTEN') {
         sendJson(res, { error: 'confirm must be FLATTEN' }, 400);
         return;
@@ -451,15 +633,19 @@ const server = createServer(async (req, res) => {
     const rel = url.pathname === '/' ? '/index.html' : url.pathname;
     const file = normalize(join(publicDir, rel));
     if (!file.startsWith(`${publicDir}/`) || !existsSync(file)) {
-      res.writeHead(404);
+      res.writeHead(404, SECURITY);
       res.end('not found');
       return;
     }
-    res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', ...SECURITY });
     res.end(readFileSync(file));
   } catch (err) {
-    res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
-    res.end(err instanceof Error ? err.message : 'error');
+    const limited = err instanceof Error && err.message === 'BODY_LIMIT';
+    const badJson = err instanceof SyntaxError;
+    if (!limited && !badJson) console.error('desk', err instanceof Error ? err.name : 'error');
+    if (!res.headersSent) {
+      sendJson(res, { error: limited ? 'Request is too large.' : badJson ? 'Request was not valid.' : 'Request failed.' }, limited || badJson ? 400 : 500);
+    }
   }
 });
 

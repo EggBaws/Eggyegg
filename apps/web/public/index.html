@@ -6,7 +6,15 @@
     <title>Choke Watcher</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
+  <body class="locked">
+    <section id="gate">
+      <p class="eyebrow">Paper desk</p>
+      <h1>Choke Watcher</h1>
+      <p class="muted">Sign in with the Google account this desk is locked to. Phone and laptop share one session.</p>
+      <div id="google-btn"></div>
+      <p id="gate-note" class="muted"></p>
+    </section>
+    <div id="desk">
     <header class="top">
       <div>
         <p class="eyebrow">Paper desk</p>
@@ -15,6 +23,8 @@
       <div class="top-meta">
         <p id="clock" class="clock">—</p>
         <p id="venue" class="muted"></p>
+        <p id="account" class="account muted"></p>
+        <button id="sign-out" type="button">Sign out</button>
         <span id="armed" class="badge off">LIVE_ARMED</span>
       </div>
     </header>
@@ -23,7 +33,22 @@
       <button id="live-toggle" type="button">Start live fires</button>
       <p id="live-note" class="muted">Live fires are off. Starting sends LIMIT orders with a stop and a target to your MEXC account. Market orders are never sent.</p>
     </div>
-    <p class="window-note">Fire window off — detection runs all day. The badge is status. The button is the only live switch, and it stays off until you confirm. The chart is the order: entry, stop, and target are the LIMIT that goes to MEXC when live fires are on.</p>
+    <p class="window-note">Fire window off — detection runs all day. The badge is status. The button is the only live switch, and it stays off until you confirm. The chart is the order: entry, stop, and target are the LIMIT that goes to MEXC when live fires are on. This page stays in step with your other signed-in screens.</p>
+    <section class="review keys">
+      <div class="detail-head">
+        <h2>MEXC keys</h2>
+        <p id="keys-status" class="muted">Keys are not loaded.</p>
+      </div>
+      <p class="window-note">Saved keys stay on this machine, encrypted. The page never shows them again. They are used only to sign a LIMIT with a stop and a target.</p>
+      <form id="keys-form">
+        <label>API key <input id="key-id" name="apiKey" type="password" autocomplete="off" spellcheck="false" /></label>
+        <label>API secret <input id="key-secret" name="apiSecret" type="password" autocomplete="off" spellcheck="false" /></label>
+        <div class="row">
+          <button type="submit">Save keys</button>
+          <button id="keys-remove" type="button">Remove saved keys</button>
+        </div>
+      </form>
+    </section>
     <section id="live-chart" class="detail">
       <div class="detail-head">
         <h2 id="live-title">Live chart</h2>
@@ -100,6 +125,7 @@
       </div>
       <div id="review"></div>
     </section>
+    </div>
     <script src="/chart.js"></script>
     <script src="/app.js"></script>
   </body>
