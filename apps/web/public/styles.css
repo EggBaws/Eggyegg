@@ -89,7 +89,18 @@ h1 { font-size: 1.6rem; }
 .table-wrap { overflow-x: auto; }
 tr.click { cursor: pointer; }
 tr.click[aria-pressed="true"] { background: #243024; }
-canvas { width: 100%; height: auto; background: #0c100c; border-radius: 8px; }
+.chart-frame { height: 520px; }
+.chart-frame canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #0c100c;
+  border-radius: 8px;
+  touch-action: none;
+  cursor: crosshair;
+}
+.seg { display: flex; gap: 4px; }
+.seg button[aria-pressed="true"] { border-color: var(--amber); color: var(--amber); }
 pre {
   white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

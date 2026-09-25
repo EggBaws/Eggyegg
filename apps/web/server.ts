@@ -32,6 +32,8 @@ const PAIR_OF: Record<string, PairId> = {
 };
 const FIVE = 300_000;
 const HOUR = 3_600_000;
+const ENGINE_BARS = 400;
+const CHART_BARS = 1_500;
 
 function abs(path: string): string {
   return isAbsolute(path) ? path : join(root, path);
@@ -100,6 +102,39 @@ function publicState(message?: string) {
   };
 }
 
+function chartPayload(pair: PairId) {
+  const view = engine.snapshot().pairs.find((row) => row.pair === pair);
+  const book = books.get(pair);
+  const source = book?.m5.length ? book.m5 : (view?.candles ?? []);
+  let marks = view?.marks ?? [];
+  if (view && source !== view.candles && view.candles.length) {
+    const origin = view.candles[0]?.time;
+    const offset = source.findIndex((candle) => candle.time === origin);
+    if (offset > 0) {
+      marks = view.marks.map((mark) => ({
+        ...mark,
+        fromIndex: mark.fromIndex + offset,
+        toIndex: mark.toIndex + offset,
+      }));
+    }
+  }
+  return {
+    pair,
+    barMs: FIVE,
+    candles: source,
+    marks,
+    entry: view?.entry ?? null,
+    sl: view?.sl ?? null,
+    tp: view?.tp ?? null,
+    side: view?.side ?? null,
+    state: view?.state ?? 'FLAT',
+    lastPrice: book?.lastPrice ?? view?.lastPrice ?? null,
+    stamp: view?.stamp ?? '',
+    lastPing: view?.lastPing ?? '',
+    liveArmed: engine.isLiveArmed(),
+  };
+}
+
 function closeTape(): void {
   tape?.close();
   tape = null;
@@ -117,7 +152,7 @@ async function ingestPair(pair: PairId, forceStale: boolean): Promise<void> {
   const now = Date.now();
   const update: MarketUpdate = {
     pair,
-    candles5m: withClosed(book.m5, FIVE, now).slice(-400),
+    candles5m: withClosed(book.m5, FIVE, now).slice(-ENGINE_BARS),
     candles1h: withClosed(book.h1, HOUR, now).slice(-80),
     lastPrice: book.lastPrice,
     nowMs: now,
@@ -182,7 +217,7 @@ async function onTape(event: TapeEvent): Promise<void> {
     closed: event.kline.timeMs + step <= now,
   };
   const prevTime = series[series.length - 1]?.time;
-  const advanced = upsert(series, bar, event.kline.interval === 'Min5' ? 400 : 80);
+  const advanced = upsert(series, bar, event.kline.interval === 'Min5' ? CHART_BARS : 80);
   if (event.kline.interval === 'Min60') {
     scheduleStale();
     return;
@@ -203,12 +238,12 @@ async function backfill(): Promise<Map<PairId, PairBook> | null> {
     config.pairs.map(async (pair) => {
       const symbol = SYMBOL[pair];
       const [m5, h1] = await Promise.all([
-        fetchMexcKlines({ symbol, interval: 'Min5', startMs: now - 400 * FIVE, endMs: now, pauseMs: 0 }),
+        fetchMexcKlines({ symbol, interval: 'Min5', startMs: now - CHART_BARS * FIVE, endMs: now, pauseMs: 0 }),
         fetchMexcKlines({ symbol, interval: 'Min60', startMs: now - 80 * HOUR, endMs: now, pauseMs: 0 }),
       ]);
       if (!m5.length) return;
       const last = m5[m5.length - 1];
-      map.set(pair, { m5: m5.slice(-400), h1: h1.slice(-80), lastPrice: last.close });
+      map.set(pair, { m5: m5.slice(-CHART_BARS), h1: h1.slice(-80), lastPrice: last.close });
     }),
   );
   if (map.size < config.pairs.length) return null;
@@ -279,6 +314,15 @@ const server = createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && url.pathname === '/api/state') {
       sendJson(res, publicState());
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/chart') {
+      const pair = url.searchParams.get('pair');
+      if (pair !== 'BTCUSDT' && pair !== 'ETHUSDT' && pair !== 'SOLUSDT') {
+        sendJson(res, { error: 'unknown pair' }, 400);
+        return;
+      }
+      sendJson(res, chartPayload(pair));
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/backtest') {

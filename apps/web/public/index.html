@@ -23,12 +23,20 @@
       <button id="live-toggle" type="button">Start live fires</button>
       <p id="live-note" class="muted">Live fires are off. Starting sends LIMIT orders with a stop and a target to your MEXC account. Market orders are never sent.</p>
     </div>
-    <p class="window-note">Fire window off — detection runs all day. The badge is status. The button is the only live switch, and it stays off until you confirm.</p>
-    <section id="tiles" class="tiles" aria-label="Pairs"></section>
-    <section id="detail" class="detail" hidden>
+    <p class="window-note">Fire window off — detection runs all day. The badge is status. The button is the only live switch, and it stays off until you confirm. The chart is the order: entry, stop, and target are the LIMIT that goes to MEXC when live fires are on.</p>
+    <section id="live-chart" class="detail">
       <div class="detail-head">
-        <h2 id="detail-title">Chart</h2>
-        <button id="close-detail" type="button">Close</button>
+        <h2 id="live-title">Live chart</h2>
+        <div class="row">
+          <div id="live-pairs" class="seg" role="group" aria-label="Pair"></div>
+          <div id="live-tfs" class="seg" role="group" aria-label="Timeframe">
+            <button type="button" data-tf="1" aria-pressed="true">5m</button>
+            <button type="button" data-tf="3">15m</button>
+            <button type="button" data-tf="12">1h</button>
+            <button type="button" data-tf="48">4h</button>
+          </div>
+          <button id="live-fit" type="button">Fit</button>
+        </div>
       </div>
       <div class="legend" aria-hidden="true">
         <span class="swatch orange">sweep</span>
@@ -39,12 +47,12 @@
         <span class="swatch green">ENTRY</span>
         <span class="swatch red">SL</span>
         <span class="swatch blue">TP</span>
-        <span class="swatch grey">NOW</span>
       </div>
-      <canvas id="chart" width="960" height="420"></canvas>
+      <div class="chart-frame"><canvas id="live-canvas"></canvas></div>
+      <p id="live-order" class="ping"></p>
       <pre id="stamp"></pre>
-      <p id="ping" class="ping"></p>
     </section>
+    <section id="tiles" class="tiles" aria-label="Pairs"></section>
     <section class="review" id="backtest-panel">
       <div class="detail-head">
         <h2>Six-month backtest</h2>
@@ -55,8 +63,21 @@
       <div id="bt-pairs"></div>
       <div class="table-wrap" id="bt-table"></div>
       <div id="bt-detail" hidden>
-        <h3 id="bt-title">Trade</h3>
+        <div class="detail-head">
+          <h3 id="bt-title">Trade</h3>
+          <div class="row">
+            <div id="bt-tfs" class="seg" role="group" aria-label="Backtest timeframe">
+              <button type="button" data-tf="1" aria-pressed="true">5m</button>
+              <button type="button" data-tf="3">15m</button>
+              <button type="button" data-tf="12">1h</button>
+              <button type="button" data-tf="48">4h</button>
+            </div>
+            <button id="bt-fit" type="button">Fit trade</button>
+          </div>
+        </div>
         <div class="legend" aria-hidden="true">
+          <span class="swatch orange">sweep</span>
+          <span class="swatch white">neck</span>
           <span class="swatch purple">FVG</span>
           <span class="swatch amber">MSS</span>
           <span class="swatch sky">BOS</span>
@@ -64,7 +85,7 @@
           <span class="swatch red">SL</span>
           <span class="swatch blue">TP</span>
         </div>
-        <canvas id="bt-chart" width="960" height="420"></canvas>
+        <div class="chart-frame"><canvas id="bt-chart"></canvas></div>
       </div>
     </section>
     <section class="review">
@@ -79,6 +100,7 @@
       </div>
       <div id="review"></div>
     </section>
+    <script src="/chart.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

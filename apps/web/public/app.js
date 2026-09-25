@@ -1,21 +1,8 @@
-const COLORS = {
-  orange: '#f59e0b',
-  white: '#f8fafc',
-  purple: '#c084fc',
-  green: '#4ade80',
-  red: '#f87171',
-  blue: '#60a5fa',
-  grey: '#94a3b8',
-  amber: '#fbbf24',
-  sky: '#38bdf8',
-};
-
 const tilesEl = document.querySelector('#tiles');
-const detailEl = document.querySelector('#detail');
-const chart = document.querySelector('#chart');
-const btChart = document.querySelector('#bt-chart');
+const liveChart = mountChart(document.querySelector('#live-canvas'));
+const tradeChart = mountChart(document.querySelector('#bt-chart'));
 let snapshot = null;
-let selected = null;
+let livePair = 'BTCUSDT';
 let backtest = null;
 let selectedTrade = null;
 
@@ -44,6 +31,7 @@ async function refresh() {
   const res = await fetch('/api/state');
   snapshot = await res.json();
   render();
+  await loadLiveChart();
 }
 
 async function load() {
@@ -82,7 +70,7 @@ function render() {
     btn.className = 'tile';
     btn.dataset.pair = pair.pair;
     btn.dataset.state = pair.state;
-    btn.setAttribute('aria-pressed', String(selected === pair.pair));
+    btn.setAttribute('aria-pressed', String(livePair === pair.pair));
     btn.innerHTML = `
       <h3>${pair.pair}</h3>
       <dl>
@@ -93,11 +81,20 @@ function render() {
         <dt>BTC aligned</dt><dd>${pair.btcAligned ? 'YES' : 'NO'}</dd>
         <dt>Last ping</dt><dd>${pair.lastPing ? escapeHtml(pair.lastPing.split('\n')[0]) : '—'}</dd>
       </dl>`;
-    btn.addEventListener('click', () => openPair(pair.pair));
+    btn.addEventListener('click', () => selectLive(pair.pair));
     tilesEl.appendChild(btn);
   }
   renderReview();
-  if (selected) paint(snapshot.pairs.find((p) => p.pair === selected));
+  const pairBox = document.querySelector('#live-pairs');
+  pairBox.innerHTML = '';
+  for (const pair of snapshot.pairs) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = pair.pair.replace(/USDT$/, '');
+    btn.setAttribute('aria-pressed', String(livePair === pair.pair));
+    btn.addEventListener('click', () => selectLive(pair.pair));
+    pairBox.appendChild(btn);
+  }
 }
 
 function renderReview() {
@@ -148,158 +145,57 @@ function renderBacktest() {
   table.querySelectorAll('tr.click').forEach((row) => {
     row.addEventListener('click', () => openTrade(row.dataset.id));
   });
-  if (selectedTrade) paintTrade(backtest.trades.find((t) => t.id === selectedTrade));
 }
 
-function openPair(pair) {
-  selected = pair;
-  detailEl.hidden = false;
+function selectLive(pair) {
+  livePair = pair;
   render();
-  requestAnimationFrame(() => {
-    const current = snapshot.pairs.find((p) => p.pair === pair);
-    paint(current);
-    detailEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
+  document.querySelector('#live-chart').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  void loadLiveChart();
+}
+
+async function loadLiveChart() {
+  const res = await fetch(`/api/chart?pair=${livePair}`);
+  if (!res.ok) return;
+  const data = await res.json();
+  liveChart.setSeries(data.candles, data.marks, data.barMs);
+  document.querySelector('#live-title').textContent = `${data.pair} · ${liveChart.label()} · ${data.state}`;
+  const order = document.querySelector('#live-order');
+  if (data.entry != null) {
+    const side = data.side === 'short' ? 'sell' : 'buy';
+    const sent = data.liveArmed ? 'armed LIMIT for MEXC' : 'LIVE off — this LIMIT is not sent';
+    order.textContent = `${side} ${money(data.entry)} · SL ${money(data.sl)} · TP ${money(data.tp)} · ${sent}`;
+  } else {
+    order.textContent = 'No entry yet. Sweep, FVG, MSS, and BOS paint as they form. Nothing is sent until live fires are on.';
+  }
+  document.querySelector('#stamp').textContent = data.stamp || '';
 }
 
 function openTrade(id) {
   selectedTrade = id;
   const trade = backtest.trades.find((t) => t.id === id);
-  document.querySelector('#bt-detail').hidden = false;
+  const panel = document.querySelector('#bt-detail');
+  panel.hidden = false;
   renderBacktest();
-  requestAnimationFrame(() => paintTrade(trade));
-}
-
-function paint(pair) {
-  if (!pair) return;
-  document.querySelector('#detail-title').textContent = `${pair.pair} · ${pair.timeframe} · ${pair.state}`;
-  document.querySelector('#stamp').textContent = pair.stamp;
-  document.querySelector('#ping').textContent = pair.lastPing ?? '';
-  drawChart(chart, { candles: pair.candles, levels: pair.levels, marks: pair.marks });
-}
-
-function paintTrade(trade) {
   if (!trade) return;
-  document.querySelector('#bt-title').textContent = `${trade.pair} ${trade.side} ${trade.outcome} · entry ${money(trade.entry)} · ${gbp(trade.pnlGbp)}`;
-  drawChart(btChart, { candles: trade.candles, levels: [], marks: trade.marks });
+  document.querySelector('#bt-title').textContent = `${trade.pair} ${trade.side} ${trade.outcome} · ${ukTime(trade.entryTime)} · entry ${money(trade.entry)} · ${gbp(trade.pnlGbp)}`;
+  tradeChart.setSeries(trade.candles, trade.marks, 300_000);
+  tradeChart.fit();
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function drawChart(canvas, view) {
-  const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-  const width = canvas.clientWidth || 960;
-  const height = 420;
-  canvas.width = Math.floor(width * dpr);
-  canvas.height = Math.floor(height * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-  const candles = view.candles ?? [];
-  const marks = view.marks ?? [];
-  const levels = view.levels ?? [];
-  if (!candles.length) return;
-  const prices = [];
-  for (const c of candles) prices.push(c.high, c.low);
-  for (const level of levels) {
-    if (level.price != null) prices.push(level.price);
-    if (level.low != null) prices.push(level.low, level.high);
-  }
-  for (const mark of marks) {
-    prices.push(mark.price);
-    if (mark.price2 != null) prices.push(mark.price2);
-  }
-  let min = Math.min(...prices);
-  let max = Math.max(...prices);
-  const pad = (max - min) * 0.12 || 1;
-  min -= pad;
-  max += pad;
-  const yOf = (price) => 20 + ((max - price) / (max - min)) * (height - 40);
-  const slot = width / candles.length;
-  const marked = new Set(marks.map((m) => m.label));
-
-  for (const level of levels) {
-    if (level.low == null || level.high == null) continue;
-    if (marked.has(level.label)) continue;
-    ctx.fillStyle = hexAlpha(COLORS[level.color] ?? '#fff', 0.16);
-    const top = yOf(level.high);
-    const bot = yOf(level.low);
-    ctx.fillRect(0, top, width, Math.max(2, bot - top));
-  }
-
-  for (const mark of marks) {
-    if (mark.price2 == null) continue;
-    const x1 = mark.fromIndex * slot;
-    const x2 = (Math.min(mark.toIndex, candles.length - 1) + 1) * slot;
-    ctx.fillStyle = hexAlpha(COLORS[mark.color] ?? '#c084fc', 0.22);
-    const top = yOf(Math.max(mark.price, mark.price2));
-    const bot = yOf(Math.min(mark.price, mark.price2));
-    ctx.fillRect(x1, top, Math.max(2, x2 - x1), Math.max(2, bot - top));
-  }
-
-  candles.forEach((c, i) => {
-    const x = i * slot + slot / 2;
-    const up = c.close >= c.open;
-    ctx.strokeStyle = up ? '#4ade80' : '#f87171';
-    ctx.fillStyle = ctx.strokeStyle;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x, yOf(c.high));
-    ctx.lineTo(x, yOf(c.low));
-    ctx.stroke();
-    const top = yOf(Math.max(c.open, c.close));
-    const bot = yOf(Math.min(c.open, c.close));
-    ctx.fillRect(x - Math.max(2, slot * 0.28), top, Math.max(4, slot * 0.56), Math.max(1, bot - top));
+function bindTimeframes(root, chart) {
+  root.addEventListener('click', (event) => {
+    const btn = event.target.closest('button');
+    if (!btn?.dataset.tf) return;
+    for (const item of root.querySelectorAll('button')) item.setAttribute('aria-pressed', 'false');
+    btn.setAttribute('aria-pressed', 'true');
+    chart.setTimeframe(Number(btn.dataset.tf));
+    if (chart === liveChart) {
+      const title = document.querySelector('#live-title');
+      title.textContent = title.textContent.replace(/· \S+ ·/, `· ${chart.label()} ·`);
+    }
   });
-
-  ctx.font = '12px ui-monospace, monospace';
-  ctx.lineWidth = 1.5;
-  for (const level of levels) {
-    if (level.price == null) continue;
-    if (!level.dashed && marked.has(level.label)) continue;
-    strokeLevel(ctx, 0, width - 8, yOf(level.price), level.color, level.dashed);
-    ctx.fillStyle = COLORS[level.color] ?? '#fff';
-    ctx.fillText(level.label, 8, yOf(level.price) - 3);
-  }
-  for (const mark of marks) {
-    if (mark.price2 != null) {
-      const x2 = (Math.min(mark.toIndex, candles.length - 1) + 1) * slot;
-      ctx.fillStyle = COLORS[mark.color] ?? '#fff';
-      ctx.fillText(mark.label, Math.max(4, mark.fromIndex * slot), yOf(Math.max(mark.price, mark.price2)) - 3);
-      continue;
-    }
-    const x1 = Math.max(0, mark.fromIndex) * slot;
-    const x2 = (Math.min(mark.toIndex, candles.length - 1) + 1) * slot;
-    if (mark.kind === 'MSS' || mark.kind === 'BOS') {
-      const x = mark.fromIndex * slot + slot / 2;
-      const y = yOf(mark.price);
-      ctx.fillStyle = COLORS[mark.color] ?? '#fff';
-      ctx.beginPath();
-      ctx.arc(x, y, 4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillText(mark.label, x + 6, y - 6);
-      continue;
-    }
-    strokeLevel(ctx, x1, x2, yOf(mark.price), mark.color, false);
-    ctx.fillStyle = COLORS[mark.color] ?? '#fff';
-    ctx.fillText(mark.label, Math.min(width - 48, Math.max(4, x2 - 44)), yOf(mark.price) - 3);
-  }
-}
-
-function strokeLevel(ctx, x1, x2, y, color, dashed) {
-  ctx.strokeStyle = COLORS[color] ?? '#fff';
-  ctx.setLineDash(dashed ? [4, 4] : []);
-  ctx.beginPath();
-  ctx.moveTo(x1, y);
-  ctx.lineTo(x2, y);
-  ctx.stroke();
-  ctx.setLineDash([]);
-}
-
-function hexAlpha(hex, alpha) {
-  const n = parseInt(hex.slice(1), 16);
-  const r = (n >> 16) & 255;
-  const g = (n >> 8) & 255;
-  const b = n & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function escapeHtml(s) {
@@ -312,13 +208,13 @@ function applyPayload(data) {
   if (data?.message) document.querySelector('#live-note').textContent = data.message;
   if (data?.error) document.querySelector('#live-note').textContent = data.error;
   render();
+  void loadLiveChart();
 }
 
-document.querySelector('#close-detail').addEventListener('click', () => {
-  selected = null;
-  detailEl.hidden = true;
-  render();
-});
+bindTimeframes(document.querySelector('#live-tfs'), liveChart);
+bindTimeframes(document.querySelector('#bt-tfs'), tradeChart);
+document.querySelector('#live-fit').addEventListener('click', () => liveChart.fit());
+document.querySelector('#bt-fit').addEventListener('click', () => tradeChart.fit());
 
 document.querySelector('#export').addEventListener('click', async () => {
   const res = await fetch('/api/review');
