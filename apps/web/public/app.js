@@ -10,6 +10,9 @@ let viewRev = 0;
 let quiet = false;
 let pollTimer = 0;
 let googleMounted = false;
+let googleClientId = '';
+let googleReady = false;
+let signInRequested = false;
 
 function money(n) {
   if (n == null || Number.isNaN(n)) return '—';
@@ -309,6 +312,24 @@ function showDesk(email) {
   void load();
 }
 
+function openGooglePrompt() {
+  const note = document.querySelector('#gate-note');
+  if (!googleClientId) {
+    note.textContent = `Sign-in needs GOOGLE_CLIENT_ID on this server. Authorized JavaScript origin: ${location.origin}`;
+    return;
+  }
+  if (!googleReady || !window.google?.accounts?.id) {
+    signInRequested = true;
+    note.textContent = 'Opening Google…';
+    return;
+  }
+  google.accounts.id.prompt((notification) => {
+    if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+      note.textContent = 'Use the Google button under Sign in with Google if the prompt does not open.';
+    }
+  });
+}
+
 function showGate() {
   document.body.classList.add('locked');
   document.querySelector('#desk').hidden = true;
@@ -320,9 +341,10 @@ function showGate() {
     .then((res) => res.json())
     .then((cfg) => {
       if (!cfg.clientId) {
-        note.textContent = `Google sign-in guards this desk. Set GOOGLE_CLIENT_ID and restart. Authorized JavaScript origin: ${location.origin}`;
+        note.textContent = `The button is ready. This server still needs GOOGLE_CLIENT_ID. Authorized JavaScript origin: ${location.origin}`;
         return;
       }
+      googleClientId = cfg.clientId;
       const script = document.createElement('script');
       script.src = 'https://accounts.google.com/gsi/client';
       script.async = true;
@@ -334,14 +356,18 @@ function showGate() {
           },
         });
         google.accounts.id.renderButton(document.querySelector('#google-btn'), {
-          theme: 'filled_black',
+          theme: 'outline',
           size: 'large',
           text: 'signin_with',
           shape: 'rectangular',
+          width: 320,
         });
+        googleReady = true;
+        note.textContent = '';
+        if (signInRequested) openGooglePrompt();
       };
       script.onerror = () => {
-        note.textContent = 'Google sign-in did not load. The desk stays closed.';
+        note.textContent = 'Google sign-in did not load. The button is still here. Try again.';
       };
       document.head.appendChild(script);
     })
@@ -467,6 +493,10 @@ document.querySelector('#live-toggle').addEventListener('click', async () => {
     return;
   }
   applyPayload(await res.json());
+});
+
+document.querySelector('#google-signin').addEventListener('click', () => {
+  openGooglePrompt();
 });
 
 document.querySelector('#sign-out').addEventListener('click', async () => {

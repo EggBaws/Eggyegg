@@ -31,7 +31,25 @@ h1 { font-size: 1.6rem; }
   border-radius: 12px;
   padding: 24px;
 }
-#google-btn { min-height: 44px; margin: 16px 0; }
+#google-signin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 16px;
+  min-height: 44px;
+  padding: 10px 16px;
+  background: #fff;
+  color: #1f1f1f;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  font-size: 15px;
+  font-weight: 560;
+}
+#google-signin svg { width: 18px; height: 18px; flex: none; }
+#google-btn { margin-top: 12px; }
+#google-btn:empty { display: none; }
 body.locked #desk { display: none; }
 body:not(.locked) #desk { display: block; }
 body:not(.locked) #gate { display: none; }
