@@ -15,7 +15,7 @@ import { appendOrderLog } from './dryRun.ts';
 import { holidayAt } from './holidays.ts';
 import { formatPrice, roundToTick } from './math.ts';
 import { acceptableEntry, isFatStop, marginRiskPct, positionQty, stopLoss, takeProfit } from './risk.ts';
-import { selectProfile, selectiveFacts, stopIsWideEnough, stopProtects } from './select.ts';
+import { selectProfile, selectiveFacts, stopIsWideEnough, stopIsWithinCap, stopProtects } from './select.ts';
 import { initialRuntime, muteRuntime, stepPair, type PairRuntime, type SetupFacts } from './stateMachine.ts';
 import { buildChartMarks } from './marks.ts';
 import { ukClock, ukDateIso, ukDateKey, ukMidnightMs, ukStamp } from './time.ts';
@@ -666,7 +666,7 @@ function priceSetup(args: {
       : roundToTick(cap, tick, side === 'long' ? 'floor' : 'ceil')
     : restingLimit(side, cap, lastPrice, tick);
   const tp = takeProfit(side, entry, config.tp_price_pct, tick);
-  const tradableStop = stopProtects(side, entry, sl) && stopIsWideEnough(entry, sl);
+  const tradableStop = stopProtects(side, entry, sl) && stopIsWideEnough(entry, sl) && stopIsWithinCap(entry, sl);
   return {
     ...base,
     zone,

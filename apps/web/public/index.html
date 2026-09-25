@@ -50,7 +50,7 @@
         <h2>Six-month backtest</h2>
         <p id="bt-range" class="muted"></p>
       </div>
-      <p class="window-note">Walk-forward on MEXC 5m candles. A fill waits until the bar after the signal. The smash must close through a neck at least 0.10% of price. The limit is the first touch of the gap. The stop is one tick past the sweep and at least 0.15% of entry.</p>
+      <p class="window-note">Walk-forward on MEXC 5m candles. A fill waits until the bar after the signal. The smash must close through a neck at least 0.10% of price, and the retest has to print within 80 minutes. The limit is the first touch of the gap. The stop is one tick past the sweep and between 0.20% and 0.50% of entry.</p>
       <div id="bt-summary" class="stats"></div>
       <div id="bt-pairs"></div>
       <div class="table-wrap" id="bt-table"></div>

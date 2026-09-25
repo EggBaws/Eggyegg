@@ -13,6 +13,7 @@ import {
   selectiveFacts,
   smashBrokeNeck,
   stopIsWideEnough,
+  stopIsWithinCap,
   stopProtects,
 } from '../src/select.ts';
 import { demoBook, ethLongCandles, ethNowMs, ETH_T0 } from '../src/synthetic.ts';
@@ -100,7 +101,7 @@ describe('selective gates', () => {
     assert.equal(order.sl, 2639.2);
   });
 
-  it('counts a 2-candle gap once it has height, and rejects a stop inside 0.15%', () => {
+  it('counts a 2-candle gap once it has height, and keeps the stop inside 0.20% to 0.50%', () => {
     const candles = ethLongCandles();
     const structure = detectStructure(candles, 0.01, ukMidnightMs(ethNowMs()), '5m');
     assert.equal(structure.fvg?.kind, '3candle');
@@ -109,7 +110,10 @@ describe('selective gates', () => {
       : null;
     assert.equal(fvgIsTradable(two, structure.sweep?.price ?? 0), true);
     assert.equal(fvgIsTradable(null, structure.sweep?.price ?? 0), false);
-    assert.equal(stopIsWideEnough(100, 99.9), false);
+    assert.equal(stopIsWideEnough(100, 99.81), false);
+    assert.equal(stopIsWideEnough(100, 99.8), true);
+    assert.equal(stopIsWithinCap(100, 99.5), false);
+    assert.equal(stopIsWithinCap(100, 99.51), true);
   });
 
   it('still arms the untouched ETH book', async () => {
