@@ -1,7 +1,7 @@
 import type { Candle, FvgBox, NeckPoint, Side, SmashPoint, Structure } from './types.ts';
 
 /**
- * Floors measured on the six-month MEXC tape for a 0.50% target.
+ * Floors measured on the six-month MEXC tape. The target is 0.04% of entry.
  * Neck at least 0.15% of the sweep, any real gap (2-candle or 3-candle).
  * Stop one tick past the sweep and at least 0.175% of entry.
  * The retest has to print within 56 closed 5m bars of the smash (4h 40m).

@@ -72,7 +72,7 @@ describe('engine dry-run', () => {
     }
     assert.equal(eth?.marks.find((m) => m.kind === 'ENTRY')?.price, 2650.2);
     assert.equal(eth?.marks.find((m) => m.kind === 'SL')?.price, 2639.2);
-    assert.equal(eth?.marks.find((m) => m.kind === 'TP')?.price, 2663.45);
+    assert.equal(eth?.marks.find((m) => m.kind === 'TP')?.price, 2651.26);
     assert.equal(eth?.marks.find((m) => m.kind === 'FVG')?.price, 2650);
 
     const orders = readOrderLog(log);
@@ -84,7 +84,7 @@ describe('engine dry-run', () => {
     assert.equal(order.side, 'buy');
     assert.equal(order.price, 2650.2);
     assert.equal(order.sl, 2639.2);
-    assert.equal(order.tp, 2663.45);
+    assert.equal(order.tp, 2651.26);
     assert.equal(order.reduceOnlySlTp, true);
     assert.equal(order.liveArmed, false);
     assert.equal(order.reason, 'LIVE_OFF');
