@@ -5,8 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import {
+  accountKeyFile,
+  allowedAccountEmail,
   applyDeskView,
   clearSessionCookie,
+  createDeskStore,
   createRateLimit,
   createSessionStore,
   emptyDeskView,
@@ -27,6 +30,7 @@ jwk.use = 'sig';
 
 const CLIENT = 'desk-client.apps.googleusercontent.com';
 const EMAIL = 'pigpunkcoin@gmail.com';
+const SUB = 'acct-owner-1';
 const NOW = 1_800_000_000_000;
 
 function mint(claims: Record<string, unknown>, opts?: { alg?: string; tamper?: boolean; kid?: string }): string {
@@ -49,6 +53,7 @@ function claims(over: Record<string, unknown> = {}): Record<string, unknown> {
     iat: Math.floor(NOW / 1000),
     email: EMAIL,
     email_verified: true,
+    sub: SUB,
     ...over,
   };
 }
@@ -61,7 +66,32 @@ describe('Google sign-in', () => {
       now: () => NOW,
       certs: async () => [jwk],
     });
-    assert.deepEqual(verdict, { ok: true, email: EMAIL });
+    assert.deepEqual(verdict, { ok: true, email: EMAIL, sub: SUB });
+  });
+
+  it('accepts any verified Google account when the desk is not locked to one address', async () => {
+    assert.equal(allowedAccountEmail(undefined), null);
+    assert.equal(allowedAccountEmail(''), null);
+    assert.equal(allowedAccountEmail('*'), null);
+    assert.equal(allowedAccountEmail('any'), null);
+    assert.equal(allowedAccountEmail('Pig@gmail.com'), 'pig@gmail.com');
+    const verdict = await verifyGoogleIdToken(mint(claims({ email: 'someone@gmail.com', sub: 'acct-other-2' })), {
+      clientId: CLIENT,
+      allowedEmail: null,
+      now: () => NOW,
+      certs: async () => [jwk],
+    });
+    assert.deepEqual(verdict, { ok: true, email: 'someone@gmail.com', sub: 'acct-other-2' });
+    const missing = claims();
+    delete missing.sub;
+    const noSub = await verifyGoogleIdToken(mint(missing), {
+      clientId: CLIENT,
+      allowedEmail: null,
+      now: () => NOW,
+      certs: async () => [jwk],
+    });
+    assert.equal(noSub.ok, false);
+    if (!noSub.ok) assert.equal(noSub.error, 'sub');
   });
 
   it('rejects another Google account, an expired token, alg none, and a tampered signature', async () => {
@@ -93,18 +123,23 @@ describe('session gate', () => {
   it('keeps the cookie HttpOnly and shares nothing but the account on a second device', () => {
     let clock = 1_000;
     const store = createSessionStore({ now: () => clock, ttlMs: 5_000 });
-    const phone = store.issue(EMAIL, false);
-    const laptop = store.issue(EMAIL, true);
+    const phone = store.issue({ email: EMAIL, sub: SUB }, false);
+    const laptop = store.issue({ email: EMAIL, sub: SUB }, true);
+    const other = store.issue({ email: 'someone@gmail.com', sub: 'acct-other-2' }, false);
     assert.match(phone.setCookie, /HttpOnly/);
     assert.match(phone.setCookie, /SameSite=Lax/);
     assert.doesNotMatch(phone.setCookie, /Secure/);
     assert.match(laptop.setCookie, /Secure/);
     assert.equal(phone.setCookie.includes(EMAIL), false);
+    assert.equal(phone.setCookie.includes(SUB), false);
     const phoneId = /choke_session=([a-f0-9]{64})/.exec(phone.setCookie)?.[1];
     const laptopId = /choke_session=([a-f0-9]{64})/.exec(laptop.setCookie)?.[1];
+    const otherId = /choke_session=([a-f0-9]{64})/.exec(other.setCookie)?.[1];
     assert.notEqual(phoneId, laptopId);
     assert.equal(store.read(`choke_session=${phoneId}`)?.email, EMAIL);
-    assert.equal(store.read(`choke_session=${laptopId}`)?.email, EMAIL);
+    assert.equal(store.read(`choke_session=${phoneId}`)?.sub, SUB);
+    assert.equal(store.read(`choke_session=${laptopId}`)?.sub, SUB);
+    assert.equal(store.read(`choke_session=${otherId}`)?.sub, 'acct-other-2');
     store.revoke(`choke_session=${phoneId}`);
     assert.equal(store.read(`choke_session=${phoneId}`), null);
     assert.equal(store.read(`choke_session=${laptopId}`)?.email, EMAIL);
@@ -122,10 +157,10 @@ describe('session gate', () => {
     assert.equal(isPublicApi('POST', '/api/live/start'), false);
     const blocked = guardApi({ method: 'GET', pathname: '/api/state', cookie: undefined, store });
     assert.deepEqual(blocked, { ok: false, status: 401 });
-    const issued = store.issue(EMAIL, false);
+    const issued = store.issue({ email: EMAIL, sub: SUB }, false);
     const id = /choke_session=([a-f0-9]{64})/.exec(issued.setCookie)?.[1];
     const open = guardApi({ method: 'GET', pathname: '/api/keys', cookie: `choke_session=${id}`, store });
-    assert.deepEqual(open, { ok: true, email: EMAIL });
+    assert.deepEqual(open, { ok: true, email: EMAIL, sub: SUB });
   });
 
   it('blocks a cross-site post and limits sign-in attempts', () => {
@@ -142,7 +177,7 @@ describe('session gate', () => {
     assert.equal(allow('1.1.1.1'), true);
   });
 
-  it('keeps one desk view for both devices', () => {
+  it('keeps one desk view for both devices of the same account', () => {
     let view = emptyDeskView();
     view = applyDeskView(view, { pair: 'ETHUSDT', timeframe: 12, tradeId: 'ETHUSDT-1774599900000' });
     assert.equal(view.rev, 2);
@@ -153,6 +188,18 @@ describe('session gate', () => {
     assert.equal(same, view);
     const junk = applyDeskView(view, { pair: 'DOGEUSDT', timeframe: 99, tradeId: '../keys' });
     assert.equal(junk, view);
+    const desks = createDeskStore();
+    const owner = desks.apply(SUB, { pair: 'SOLUSDT', timeframe: 48 });
+    const phone = desks.apply(SUB, { tradeId: 'SOLUSDT-1' });
+    const stranger = desks.get('acct-other-2');
+    assert.equal(owner.pair, 'SOLUSDT');
+    assert.equal(phone.pair, 'SOLUSDT');
+    assert.equal(desks.get(SUB).timeframe, 48);
+    assert.equal(desks.get(SUB).tradeId, 'SOLUSDT-1');
+    assert.equal(desks.get(SUB).rev, phone.rev);
+    assert.equal(stranger.pair, 'BTCUSDT');
+    assert.equal(stranger.tradeId, null);
+    assert.notEqual(stranger.rev, desks.get(SUB).rev);
   });
 });
 
@@ -177,5 +224,11 @@ describe('stored keys', () => {
     assert.deepEqual(status, { configured: true, source: 'saved' });
     assert.equal(JSON.stringify(status).includes(payload.apiKey), false);
     assert.equal(JSON.stringify(keyStatus('none')).includes('apiSecret'), false);
+    const left = accountKeyFile(dir, SUB);
+    const right = accountKeyFile(dir, 'acct-other-2');
+    assert.notEqual(left, right);
+    assert.equal(left.includes(SUB), false);
+    assert.match(left, /[a-f0-9]{64}\.enc$/);
+    assert.match(right, /[a-f0-9]{64}\.enc$/);
   });
 });

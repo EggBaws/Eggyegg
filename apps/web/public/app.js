@@ -307,7 +307,7 @@ function showDesk(email) {
   document.body.classList.remove('locked');
   document.querySelector('#desk').hidden = false;
   const account = document.querySelector('#account');
-  account.textContent = `${email} · one session on every signed-in screen`;
+  account.textContent = `${email} · this Google account stays in sync across screens`;
   startPoll();
   void load();
 }
@@ -400,9 +400,8 @@ async function loadKeys() {
     status.textContent = data.error;
     return;
   }
-  if (data.source === 'saved') status.textContent = 'Saved keys are on this machine. The values are not shown.';
-  else if (data.source === 'environment') status.textContent = 'Using keys from the environment. Saving here replaces them for this desk.';
-  else status.textContent = 'No keys stored. Live fires stay off until you save keys or set them in the environment.';
+  if (data.source === 'saved') status.textContent = 'Saved keys for this account are on this machine. The values are not shown.';
+  else status.textContent = 'No keys stored for this account. Live fires stay off until you save them.';
 }
 
 function clearKeyInputs() {

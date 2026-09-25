@@ -1,9 +1,9 @@
-import { createPublicKey, randomBytes, timingSafeEqual, verify as cryptoVerify, type JsonWebKey } from 'node:crypto';
+import { createHash, createPublicKey, randomBytes, timingSafeEqual, verify as cryptoVerify, type JsonWebKey } from 'node:crypto';
+import { join } from 'node:path';
 
 const COOKIE = 'choke_session';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CLOCK_SKEW_SEC = 60;
-const DEFAULT_EMAIL = 'pigpunkcoin@gmail.com';
 
 export interface Jwk {
   kid?: string;
@@ -21,20 +21,37 @@ export interface DeskView {
   tradeId: string | null;
 }
 
+export interface AccountSession {
+  email: string;
+  sub: string;
+}
+
 export interface SessionStore {
-  issue(email: string, secure: boolean): { setCookie: string };
-  read(cookieHeader: string | undefined): { email: string } | null;
+  issue(account: AccountSession, secure: boolean): { setCookie: string };
+  read(cookieHeader: string | undefined): AccountSession | null;
   revoke(cookieHeader: string | undefined): void;
+}
+
+export interface DeskStore {
+  get(sub: string): DeskView;
+  apply(sub: string, patch: { pair?: unknown; timeframe?: unknown; tradeId?: unknown }): DeskView;
 }
 
 interface SessionRow {
   email: string;
+  sub: string;
   exp: number;
 }
 
-export function allowedAccountEmail(envValue: string | undefined): string {
+export function allowedAccountEmail(envValue: string | undefined): string | null {
   const raw = (envValue ?? '').trim().toLowerCase();
-  return raw || DEFAULT_EMAIL;
+  if (!raw || raw === '*' || raw === 'any') return null;
+  return raw;
+}
+
+export function accountKeyFile(dir: string, sub: string): string {
+  const id = createHash('sha256').update(sub).digest('hex');
+  return join(dir, `${id}.enc`);
 }
 
 export function publicAuthConfig(clientId: string | undefined): { clientId: string | null; configured: boolean } {
@@ -55,12 +72,12 @@ export function guardApi(input: {
   pathname: string;
   cookie: string | undefined;
   store: SessionStore;
-}): { ok: true; email: string } | { ok: false; status: 401 } {
-  if (!input.pathname.startsWith('/api/')) return { ok: true, email: '' };
-  if (isPublicApi(input.method, input.pathname)) return { ok: true, email: '' };
+}): { ok: true; email: string; sub: string } | { ok: false; status: 401 } {
+  if (!input.pathname.startsWith('/api/')) return { ok: true, email: '', sub: '' };
+  if (isPublicApi(input.method, input.pathname)) return { ok: true, email: '', sub: '' };
   const session = input.store.read(input.cookie);
   if (!session) return { ok: false, status: 401 };
-  return { ok: true, email: session.email };
+  return { ok: true, email: session.email, sub: session.sub };
 }
 
 export function originAllowed(input: { origin?: string; host?: string; secFetchSite?: string }): boolean {
@@ -123,9 +140,9 @@ export function createSessionStore(opts?: { now?: () => number; ttlMs?: number }
   }
 
   return {
-    issue(email: string, secure: boolean) {
+    issue(account: AccountSession, secure: boolean) {
       const id = randomBytes(32).toString('hex');
-      rows.set(id, { email, exp: now() + ttl });
+      rows.set(id, { email: account.email, sub: account.sub, exp: now() + ttl });
       return { setCookie: serializeCookie(id, secure, Math.floor(ttl / 1000)) };
     },
     read(cookieHeader: string | undefined) {
@@ -137,7 +154,7 @@ export function createSessionStore(opts?: { now?: () => number; ttlMs?: number }
         return null;
       }
       row.exp = now() + ttl;
-      return { email: row.email };
+      return { email: row.email, sub: row.sub };
     },
     revoke(cookieHeader: string | undefined) {
       const id = readId(cookieHeader);
@@ -148,6 +165,26 @@ export function createSessionStore(opts?: { now?: () => number; ttlMs?: number }
 
 export function emptyDeskView(): DeskView {
   return { rev: 1, pair: 'BTCUSDT', timeframe: 1, tradeId: null };
+}
+
+export function createDeskStore(): DeskStore {
+  const views = new Map<string, DeskView>();
+  function get(sub: string): DeskView {
+    let view = views.get(sub);
+    if (!view) {
+      view = emptyDeskView();
+      views.set(sub, view);
+    }
+    return view;
+  }
+  return {
+    get,
+    apply(sub: string, patch: { pair?: unknown; timeframe?: unknown; tradeId?: unknown }) {
+      const next = applyDeskView(get(sub), patch);
+      views.set(sub, next);
+      return next;
+    },
+  };
 }
 
 export function applyDeskView(current: DeskView, patch: { pair?: unknown; timeframe?: unknown; tradeId?: unknown }): DeskView {
@@ -174,11 +211,11 @@ export async function verifyGoogleIdToken(
   token: string,
   opts: {
     clientId: string;
-    allowedEmail: string;
+    allowedEmail: string | null;
     now?: () => number;
     certs?: () => Promise<Jwk[]>;
   },
-): Promise<{ ok: true; email: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; email: string; sub: string } | { ok: false; error: string }> {
   const now = opts.now ?? (() => Date.now());
   if (typeof token !== 'string' || token.length < 20 || token.length > 4096) return { ok: false, error: 'malformed' };
   const parts = token.split('.');
@@ -191,6 +228,7 @@ export async function verifyGoogleIdToken(
     iat?: unknown;
     email?: unknown;
     email_verified?: unknown;
+    sub?: unknown;
   };
   try {
     header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')) as typeof header;
@@ -223,8 +261,14 @@ export async function verifyGoogleIdToken(
   if (claims.email_verified !== true && claims.email_verified !== 'true') return { ok: false, error: 'unverified' };
   if (typeof claims.email !== 'string') return { ok: false, error: 'email' };
   const email = claims.email.trim().toLowerCase();
-  if (!emailsMatch(email, opts.allowedEmail.trim().toLowerCase())) return { ok: false, error: 'email' };
-  return { ok: true, email };
+  if (!email) return { ok: false, error: 'email' };
+  if (opts.allowedEmail !== null && !emailsMatch(email, opts.allowedEmail.trim().toLowerCase())) {
+    return { ok: false, error: 'email' };
+  }
+  if (typeof claims.sub !== 'string') return { ok: false, error: 'sub' };
+  const sub = claims.sub.trim();
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(sub)) return { ok: false, error: 'sub' };
+  return { ok: true, email, sub };
 }
 
 let certCache: { keys: Jwk[]; exp: number } | null = null;

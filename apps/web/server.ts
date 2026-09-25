@@ -16,17 +16,16 @@ import {
   type TapeEvent,
 } from '../../packages/venues/src/index.ts';
 import {
+  accountKeyFile,
   allowedAccountEmail,
-  applyDeskView,
   clearSessionCookie,
   cookieIsSecure,
+  createDeskStore,
   createRateLimit,
   createSessionStore,
-  emptyDeskView,
   originAllowed,
   publicAuthConfig,
   verifyGoogleIdToken,
-  type DeskView,
 } from './auth.ts';
 import { keyStatus, readKeyFile, removeKeyFile, saveKeyFile, validKeyMaterial, type StoredKeys } from './secrets.ts';
 
@@ -89,10 +88,11 @@ const TYPES: Record<string, string> = {
   '.png': 'image/png',
 };
 const BODY_LIMIT = 8192;
-const keyPath = join(root, 'data/mexc-keys.enc');
+const userKeyDir = join(root, 'data/users');
 const sessions = createSessionStore();
+const desks = createDeskStore();
 const loginLimit = createRateLimit({ limit: 8, windowMs: 15 * 60 * 1000 });
-let deskView: DeskView = emptyDeskView();
+let liveOwner: string | null = null;
 const SECURITY: Record<string, string> = {
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
@@ -101,7 +101,7 @@ const SECURITY: Record<string, string> = {
     "default-src 'self'",
     "script-src 'self' https://accounts.google.com",
     "frame-src https://accounts.google.com",
-    "connect-src 'self'",
+    "connect-src 'self' https://accounts.google.com",
     "style-src 'self'",
     "img-src 'self' data:",
     "base-uri 'self'",
@@ -159,28 +159,41 @@ function requestSecure(req: IncomingMessage): boolean {
   return cookieIsSecure({ forwardedProto: headerValue(req, 'x-forwarded-proto') });
 }
 
-function resolveTradingKeys(): { keys: StoredKeys | null; source: 'saved' | 'environment' | 'none'; error?: string } {
-  if (existsSync(keyPath)) {
-    const passphrase = process.env.KEY_SECRET ?? '';
-    if (!passphrase) return { keys: null, source: 'none', error: 'KEY_SECRET is not set. Saved keys stay locked.' };
-    const opened = readKeyFile(keyPath, passphrase);
-    if (!opened) return { keys: null, source: 'none', error: 'Saved keys could not be opened.' };
-    return { keys: opened, source: 'saved' };
+function configuredClientId(): string | undefined {
+  const fromEnv = (process.env.GOOGLE_CLIENT_ID ?? '').trim();
+  if (fromEnv) return fromEnv;
+  const path = join(root, 'data/google-client-id');
+  if (!existsSync(path)) return undefined;
+  try {
+    const line = readFileSync(path, 'utf8').split(/\r?\n/, 1)[0]?.trim() ?? '';
+    return line || undefined;
+  } catch {
+    return undefined;
   }
-  const apiKey = process.env.MEXC_API_KEY ?? '';
-  const apiSecret = process.env.MEXC_API_SECRET ?? '';
-  if (apiKey && apiSecret) return { keys: { apiKey, apiSecret }, source: 'environment' };
-  return { keys: null, source: 'none' };
 }
 
-function publicState(message?: string) {
+function resolveTradingKeys(sub: string): { keys: StoredKeys | null; source: 'saved' | 'none'; error?: string } {
+  const path = accountKeyFile(userKeyDir, sub);
+  if (!existsSync(path)) return { keys: null, source: 'none' };
+  const passphrase = process.env.KEY_SECRET ?? '';
+  if (!passphrase) return { keys: null, source: 'none', error: 'KEY_SECRET is not set. Saved keys stay locked.' };
+  const opened = readKeyFile(path, passphrase);
+  if (!opened) return { keys: null, source: 'none', error: 'Saved keys could not be opened.' };
+  return { keys: opened, source: 'saved' };
+}
+
+function foreignLive(sub: string): boolean {
+  return engine.isLiveArmed() && liveOwner !== null && liveOwner !== sub;
+}
+
+function publicState(sub: string, message?: string) {
   const snap = engine.snapshot();
   return {
     ...snap,
     feed: mode,
     liveVenue: engine.isLiveArmed() ? 'mexc' : null,
     message: message ?? tapeMessage,
-    view: deskView,
+    view: desks.get(sub),
   };
 }
 
@@ -404,7 +417,7 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (method === 'GET' && url.pathname === '/api/auth/config') {
-      sendJson(res, publicAuthConfig(process.env.GOOGLE_CLIENT_ID));
+      sendJson(res, publicAuthConfig(configuredClientId()));
       return;
     }
     if (method === 'POST' && url.pathname === '/api/auth/google') {
@@ -413,7 +426,7 @@ const server = createServer(async (req, res) => {
         sendJson(res, { error: 'Too many sign-in attempts. Wait and try again.' }, 429);
         return;
       }
-      const client = publicAuthConfig(process.env.GOOGLE_CLIENT_ID);
+      const client = publicAuthConfig(configuredClientId());
       if (!client.configured || !client.clientId) {
         sendJson(res, { error: 'Sign-in is not configured.' }, 503);
         return;
@@ -428,7 +441,7 @@ const server = createServer(async (req, res) => {
         sendJson(res, { error: 'Sign-in failed.' }, 401);
         return;
       }
-      const issued = sessions.issue(verdict.email, requestSecure(req));
+      const issued = sessions.issue({ email: verdict.email, sub: verdict.sub }, requestSecure(req));
       sendJson(res, { email: verdict.email }, 200, { 'set-cookie': issued.setCookie });
       return;
     }
@@ -437,8 +450,9 @@ const server = createServer(async (req, res) => {
       sendJson(res, { ok: true }, 200, { 'set-cookie': clearSessionCookie(requestSecure(req)) });
       return;
     }
+    let session: { email: string; sub: string } | null = null;
     if (url.pathname.startsWith('/api/')) {
-      const session = sessions.read(req.headers.cookie);
+      session = sessions.read(req.headers.cookie);
       if (!session) {
         sendJson(res, { error: 'Sign in required.' }, 401);
         return;
@@ -448,8 +462,9 @@ const server = createServer(async (req, res) => {
         return;
       }
     }
+    const sub = session?.sub ?? '';
     if (req.method === 'GET' && url.pathname === '/api/state') {
-      sendJson(res, publicState());
+      sendJson(res, publicState(sub));
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/chart') {
@@ -491,7 +506,7 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/keys') {
-      const resolved = resolveTradingKeys();
+      const resolved = resolveTradingKeys(sub);
       sendJson(res, keyStatus(resolved.source, resolved.error));
       return;
     }
@@ -508,24 +523,23 @@ const server = createServer(async (req, res) => {
         sendJson(res, { error: 'Keys were rejected. Nothing was stored.' }, 400);
         return;
       }
-      saveKeyFile(keyPath, { apiKey, apiSecret }, passphrase);
+      saveKeyFile(accountKeyFile(userKeyDir, sub), { apiKey, apiSecret }, passphrase);
       sendJson(res, keyStatus('saved'));
       return;
     }
     if (req.method === 'DELETE' && url.pathname === '/api/keys') {
-      removeKeyFile(keyPath);
-      const resolved = resolveTradingKeys();
-      sendJson(res, keyStatus(resolved.source));
+      removeKeyFile(accountKeyFile(userKeyDir, sub));
+      sendJson(res, keyStatus('none'));
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/session/view') {
       const body = await readJson(req);
-      deskView = applyDeskView(deskView, {
+      const view = desks.apply(sub, {
         pair: body.pair,
         timeframe: body.timeframe,
         tradeId: body.tradeId === null ? null : body.tradeId,
       });
-      sendJson(res, { view: deskView });
+      sendJson(res, { view });
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/tape') {
@@ -534,13 +548,18 @@ const server = createServer(async (req, res) => {
         return;
       }
       const message = await startTape();
-      sendJson(res, publicState(message));
+      sendJson(res, publicState(sub, message));
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/live/start') {
+      if (foreignLive(sub)) {
+        const message = 'Another account has live fires on. Nothing was sent.';
+        sendJson(res, { ok: false, liveArmed: true, message, state: publicState(sub, message) }, 409);
+        return;
+      }
       const body = await readJson(req);
       const confirm = typeof body.confirm === 'string' ? body.confirm : '';
-      const resolved = resolveTradingKeys();
+      const resolved = resolveTradingKeys(sub);
       const apiKey = resolved.keys?.apiKey ?? '';
       const apiSecret = resolved.keys?.apiSecret ?? '';
       if (resolved.error || !apiKey || !apiSecret || confirm !== 'START_LIVE') {
@@ -548,9 +567,9 @@ const server = createServer(async (req, res) => {
         const message = resolved.error
           ? `${resolved.error} Nothing was sent.`
           : !apiKey || !apiSecret
-            ? 'No MEXC keys are available. Save them on this desk or set them in the environment. Nothing was sent.'
+            ? 'No MEXC keys are saved for this account. Nothing was sent.'
             : gate.message;
-        sendJson(res, { ok: false, liveArmed: false, message, state: publicState(message) }, 400);
+        sendJson(res, { ok: false, liveArmed: false, message, state: publicState(sub, message) }, 400);
         return;
       }
       liveVenue = createMexcLive({ apiKey, apiSecret, leverage: config.leverage });
@@ -563,48 +582,59 @@ const server = createServer(async (req, res) => {
       const gate = liveArmGate({ confirm: 'START_LIVE', apiKey, apiSecret, accountOk });
       if (!gate.arm || !liveVenue) {
         liveVenue = null;
-        sendJson(res, { ok: false, liveArmed: false, message: gate.message, state: publicState(gate.message) }, 400);
+        sendJson(res, { ok: false, liveArmed: false, message: gate.message, state: publicState(sub, gate.message) }, 400);
         return;
       }
       if (mode !== 'market') {
         const message = await startTape();
         if (mode !== 'market') {
           liveVenue = null;
-          sendJson(res, { ok: false, liveArmed: false, message, state: publicState(message) }, 502);
+          sendJson(res, { ok: false, liveArmed: false, message, state: publicState(sub, message) }, 502);
           return;
         }
       }
       engine.setVenue(liveVenue);
       engine.setLiveArmed(true);
+      liveOwner = sub;
       const message = 'Live fires are on. The next fresh 5m close can send a LIMIT with a stop and a target. Market orders are never sent.';
       tapeMessage = message;
-      sendJson(res, { ok: true, liveArmed: true, message, state: publicState(message) });
+      sendJson(res, { ok: true, liveArmed: true, message, state: publicState(sub, message) });
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/live/stop') {
+      if (foreignLive(sub)) {
+        const message = 'Another account started live fires. This account cannot stop them.';
+        sendJson(res, { ok: false, liveArmed: true, message, state: publicState(sub, message) }, 409);
+        return;
+      }
       const body = await readJson(req);
       const confirm = typeof body.confirm === 'string' ? body.confirm : '';
       const gate = liveStopGate(confirm);
       if (!gate.stop) {
-        sendJson(res, { ok: false, liveArmed: engine.isLiveArmed(), message: gate.message, state: publicState(gate.message) }, 400);
+        sendJson(res, { ok: false, liveArmed: engine.isLiveArmed(), message: gate.message, state: publicState(sub, gate.message) }, 400);
         return;
       }
       const { failed, cancelled } = await cancelWorking();
       engine.setLiveArmed(false);
       engine.setVenue(stub);
+      liveOwner = null;
       const message = failed.length
         ? `Live fires are off. Cancel failed for ${failed.join(', ')}. Check the exchange.`
         : cancelled
           ? 'Live fires are off. Working MEXC limits were cancelled.'
           : 'Live fires are off. The MEXC tape keeps painting. Nothing further is sent.';
       tapeMessage = message;
-      sendJson(res, { ok: failed.length === 0, liveArmed: false, message, state: publicState(message) });
+      sendJson(res, { ok: failed.length === 0, liveArmed: false, message, state: publicState(sub, message) });
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/kill') {
       const body = await readJson(req);
       if (body.confirm !== 'FLATTEN') {
         sendJson(res, { error: 'confirm must be FLATTEN' }, 400);
+        return;
+      }
+      if (foreignLive(sub)) {
+        sendJson(res, { error: 'Another account has live fires on. This account cannot flatten them.' }, 409);
         return;
       }
       if (engine.isLiveArmed()) {
@@ -615,7 +645,7 @@ const server = createServer(async (req, res) => {
         }
       }
       engine.killToday(Date.now());
-      sendJson(res, publicState());
+      sendJson(res, publicState(sub));
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/replay') {
@@ -629,7 +659,7 @@ const server = createServer(async (req, res) => {
       engine = bootDemo();
       await engine.runBook(demoBook().updates);
       tapeMessage = 'Synthetic replay. Live fires are off. Nothing is sent.';
-      sendJson(res, publicState());
+      sendJson(res, publicState(sub));
       return;
     }
     const rel = url.pathname === '/' ? '/index.html' : url.pathname;

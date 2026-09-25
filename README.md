@@ -26,13 +26,13 @@ Override the port with `PORT`.
 
 ## Sign-in and keys
 
-The desk is closed until Google sign-in succeeds. Only one account can open it. The default is `pigpunkcoin@gmail.com`. Set `GOOGLE_ALLOWED_EMAIL` to lock it to a different address. `email_verified` is required. A session cookie is `HttpOnly` and `SameSite=Lax`, and it is `Secure` when the desk is behind HTTPS. The cookie holds a random id, not the email and not the exchange keys. Sessions live in memory, so a restart signs every screen out.
+The desk is closed until Google sign-in succeeds. Any verified Google account can sign in. Set `GOOGLE_ALLOWED_EMAIL` only if you want to lock the desk to one address. `email_verified` is required. A session cookie is `HttpOnly` and `SameSite=Lax`, and it is `Secure` when the desk is behind HTTPS. The cookie holds a random id, not the email, not the Google account id, and not the exchange keys. Sessions live in memory, so a restart signs every screen out.
 
-Phone and laptop each get their own cookie and the same desk. Pair, timeframe, and the open backtest trade follow the latest change. Chart zoom stays on the screen that set it. Market data, the book, and the live switch are already one process, so both screens paint the same tape.
+Each Google account has its own pair, timeframe, open backtest trade, and keys. Phone and laptop signed in as the same account each get their own cookie and the same desk. Chart zoom stays on the screen that set it. A different Google account does not see that desk. The market tape is one process, so every signed-in account paints the same candles. Live fires belong to the account that turned them on. Another account cannot start or stop those fires.
 
-Create a Google OAuth client of type **Web application**. Put the client id in `GOOGLE_CLIENT_ID`. Add authorized JavaScript origins for every URL you open, for example `http://127.0.0.1:4173` and `http://192.168.1.20:4173`. No client secret is stored. The server checks the ID token against Google's published keys.
+Create a Google OAuth client of type **Web application**. Put the client id in `GOOGLE_CLIENT_ID`, or as the first line of `data/google-client-id` (that directory is gitignored). Add authorized JavaScript origins for every URL you open, for example `http://127.0.0.1:4173` and the phone's address such as `http://192.168.1.20:4173`. No client secret is stored. The server checks the ID token against Google's published keys. Without a client id whose origins match the page, the Sign in with Google button stays on the page and Google does not open.
 
-Exchange keys typed into the page are encrypted with AES-256-GCM and written to `data/mexc-keys.enc` (mode `0600`). That directory is gitignored. The encryption key is `KEY_SECRET` from the environment, not a file next to the ciphertext. The page never reads the saved values back. A missing or wrong `KEY_SECRET` leaves the file locked. If no file has been saved, `MEXC_API_KEY` and `MEXC_API_SECRET` are still accepted. Saved keys take priority. Nothing in the order log or the API responses contains the key or the secret.
+Exchange keys typed into the page are encrypted with AES-256-GCM and written to `data/users/<sha256 of the Google account id>.enc` (mode `0600`). That directory is gitignored. The encryption key is `KEY_SECRET` from the environment, not a file next to the ciphertext. The page never reads the saved values back. A missing or wrong `KEY_SECRET` leaves the file locked and refuses a save. Keys from the environment are not shared across accounts. Nothing in the order log or the API responses contains the key or the secret.
 
 ```bash
 GOOGLE_CLIENT_ID=....apps.googleusercontent.com KEY_SECRET=$(openssl rand -base64 32) npm start
@@ -42,7 +42,7 @@ Keep `KEY_SECRET` somewhere you control outside this repo. Losing it means typin
 
 ## Phone
 
-Open the same address in the phone browser, then add it to the home screen. On iPhone that is Share, then Add to Home Screen. On Android it is the browser menu, then Install app or Add to Home screen. The icon opens full screen. Sign in with the same Google account. The phone and the laptop stay on one desk.
+Open the same address in the phone browser, then add it to the home screen. On iPhone that is Share, then Add to Home Screen. On Android it is the browser menu, then Install app or Add to Home screen. The icon opens full screen. Sign in with Google. The same account on the phone and the laptop stays on one desk. A different account is a separate desk.
 
 The chart uses one finger to pan and two fingers to zoom. Drag past the last candle to look ahead. Zoom goes in to a handful of bars. A backtest row opens that trade with candles after the signal, including about four hours after the exit, and that chart pans and zooms the same way. Fit on the live chart returns to the latest bars. Fit trade recentres the entry. Chart, Pairs, Book, and Keys sit on a bar at the bottom of a narrow screen. The home-screen install uses `manifest.webmanifest`. The service worker does not cache `/api/` and does not store keys.
 
@@ -53,7 +53,7 @@ The chart uses one finger to pan and two fingers to zoom. Drag past the last can
 | control | behaviour |
 | --- | --- |
 | Button off (default) | Paint the live MEXC tape, ping, and on a fresh 5m close append a dry-run LIMIT with reason `LIVE_OFF`. No exchange order is sent. |
-| **Start live fires** | Asks you to confirm, then uses saved keys, or the environment keys if none are saved. If neither is available, or MEXC rejects the account call, the switch stays off and nothing is sent. |
+| **Start live fires** | Asks you to confirm, then uses the keys saved for this Google account. If none are saved, or MEXC rejects the account call, the switch stays off and nothing is sent. Another account cannot start or stop fires that are already on. |
 | Button on | The next fresh 5m close can send a **LIMIT** (type 1) on MEXC with `stopLossPrice` and `takeProfitPrice`. Size is an integer contract count. Ticker updates paint the zone and do not fire. |
 | **Stop live fires** | Asks you to confirm, cancels working limits by `externalOid`, and stops further sends. The tape keeps painting. |
 
