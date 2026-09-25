@@ -63,22 +63,22 @@ Order type is always `LIMIT`. Client order id is `choke-v1-{pair}-{yyyymmdd}` in
 
 ## Backtest
 
-`npm run backtest` replays BTC, ETH, and SOL for about six months. Each decision uses only candles that have already closed. The limit is eligible on the next bar, not on the signal bar. A bar that trades through both the stop and the target counts as a loss. Setups that never fill, or that invalidate first, are misses and are not in the win rate. Paper pnl is quantity times the price distance. The stake is the config GBP figure with no FX conversion.
+`npm run backtest` replays BTC, ETH, and SOL for about six months. Each decision uses only candles that have already closed. The limit is eligible on the next bar, not on the signal bar. A bar that trades the structure stop counts as a loss, even when that bar also trades the lock. After the lock, a return to 1.33% closes there, ahead of the 1.83% target. Setups that never fill, or that invalidate first, are misses and are not in the win rate. Paper pnl is quantity times the price distance. The stake is the config GBP figure with no FX conversion.
 
-The page reads `logs/backtest.json` and lists wins, losses, win rate, and net. Click a trade to see that window with FVG, BOS, MSS, entry, TP, and SL on the candles that produced them. Cached klines live in `data/` and are not committed. Set `BACKTEST_REFRESH=1` to download again.
+The page reads `logs/backtest.json` and lists wins, losses, win rate, and net. Click a trade to see that window with FVG, BOS, MSS, entry, the lock, TP, and SL on the candles that produced them. Cached klines live in `data/` and are not committed. Set `BACKTEST_REFRESH=1` to download again.
 
-Paying replay, 25 Mar 2026 → 24 Sep 2026, with the target closed at 1.33% of entry. One trade is still open at the end of the tape. The order now rests 0.50% further and moves the stop to that 1.33% price when it trades, so a winner that comes back still closes there.
+Paying replay, 25 Mar 2026 → 24 Sep 2026. The stop moves to 1.33% of entry when that price trades, and the resting target is 1.83%. Thirteen of the 67 wins held to 1.83%. The other 54 came back through the lock and closed there. One trade is still open at the end of the tape.
 
 | | Wins | Losses | Misses | Win rate | Net |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Book | 67 | 164 | 6 | 29.0% | +£3,507.80 |
-| BTCUSDT | 14 | 38 | 1 | 26.9% | +£781.84 |
-| ETHUSDT | 29 | 69 | 2 | 29.6% | +£1,563.88 |
-| SOLUSDT | 24 | 57 | 3 | 29.6% | +£1,162.08 |
+| Book | 67 | 164 | 6 | 29.0% | +£4,157.77 |
+| BTCUSDT | 14 | 38 | 1 | 26.9% | +£881.83 |
+| ETHUSDT | 29 | 69 | 2 | 29.6% | +£1,913.83 |
+| SOLUSDT | 24 | 57 | 3 | 29.6% | +£1,362.10 |
 
-Wins by UK month: March 4 (from the 25th), April 16, May 5, June 16, July 11, August 8, September 7 (through the 24th).
+Wins by UK month: March 4 (from the 25th), April 16, May 5, June 16, July 11, August 8, September 7 (through the 24th). The further target was taken by 2 BTC, 7 ETH, and 4 SOL wins.
 
-Profit is the sort, then the win count. A 0.04% target won 230 and lost 30 (88.5%) for +£96.76, and SOL longs lost money because each win paid about £4. On this tape the profit peaks at 1.33%: +£3,507.80, with 67 wins. SOL is +£1,162.08, and both SOL sides are positive. The neighbours pay less (1.32% is +£3,422.52, 1.34% is +£3,421.81). The neck floor, the 4 hour 40 minute retest, and the 0.175% stop floor stay. Raising that stop floor at this target cut the profit.
+Profit is the sort, then the win count. A 0.04% target won 230 and lost 30 (88.5%) for +£96.76, and SOL longs lost money because each win paid about £4. On a fixed target, profit on this tape peaks at 1.33%: +£3,507.80, with 67 wins. SOL on that fixed target is +£1,162.08, and both SOL sides are positive. The neighbours pay less (1.32% is +£3,422.52, 1.34% is +£3,421.81). That is why the lock stays at 1.33%. This book keeps that lock and pays 1.83% when price holds through it: +£4,157.77. The neck floor, the 4 hour 40 minute retest, and the 0.175% stop floor stay. Raising that stop floor at this target cut the profit.
 
 What the replay kept:
 
