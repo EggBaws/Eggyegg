@@ -58,8 +58,8 @@ describe('backtest', () => {
     ];
     const extra = Array.from({ length: 40 }, (_, i) => candle((80 + i) * FIVE, 10, 11, 9, 10.2));
     const chart = extendChart(candles, marks, extra);
-    assert.equal(chart.candles.length, 80);
+    assert.equal(chart.candles.length, 120);
     assert.equal(chart.marks.find((m) => m.kind === 'MSS')?.fromIndex, 70);
-    assert.equal(chart.marks.find((m) => m.kind === 'ENTRY')?.toIndex, 79);
+    assert.equal(chart.marks.find((m) => m.kind === 'ENTRY')?.toIndex, 119);
   });
 });

@@ -44,7 +44,7 @@ Keep `KEY_SECRET` somewhere you control outside this repo. Losing it means typin
 
 Open the same address in the phone browser, then add it to the home screen. On iPhone that is Share, then Add to Home Screen. On Android it is the browser menu, then Install app or Add to Home screen. The icon opens full screen. Sign in with the same Google account. The phone and the laptop stay on one desk.
 
-The chart uses one finger to pan and two fingers to zoom. Fit recentres it. Chart, Pairs, Book, and Keys sit on a bar at the bottom of a narrow screen. The home-screen install uses `manifest.webmanifest`. The service worker does not cache `/api/` and does not store keys.
+The chart uses one finger to pan and two fingers to zoom. Drag past the last candle to look ahead. Zoom goes in to a handful of bars. A backtest row opens that trade with candles after the signal, including about four hours after the exit, and that chart pans and zooms the same way. Fit on the live chart returns to the latest bars. Fit trade recentres the entry. Chart, Pairs, Book, and Keys sit on a bar at the bottom of a narrow screen. The home-screen install uses `manifest.webmanifest`. The service worker does not cache `/api/` and does not store keys.
 
 ## LIVE_ARMED
 

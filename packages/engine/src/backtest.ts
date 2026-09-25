@@ -8,6 +8,7 @@ const FIVE = 5 * 60_000;
 const HOUR = 60 * 60_000;
 const WINDOW = 360;
 const CHART_BARS = 80;
+const AHEAD_BARS = 48;
 
 export interface BacktestTrade {
   id: string;
@@ -129,7 +130,8 @@ export async function runBacktest(
       if (!outcome) continue;
       const exitPrice = outcome === 'WIN' ? trade.tp : trade.sl;
       const pnl = paperPnl(trade.side, trade.qty, trade.entry, exitPrice);
-      const chart = extendChart(trade.candles, trade.marks, bars.slice(trade.armIndex + 1, idx + 1));
+      const followEnd = Math.min(bars.length, idx + 1 + AHEAD_BARS);
+      const chart = extendChart(trade.candles, trade.marks, bars.slice(trade.armIndex + 1, followEnd));
       engine.realizePnl(pnl, nowMs);
       engine.markClosed(pair, nowMs);
       trades.push({
@@ -191,7 +193,13 @@ export async function runBacktest(
 
   const endTime = timeline.length ? timeline[timeline.length - 1] : 0;
   for (const trade of open.values()) {
-    trades.push(asTrade(trade, trade.filled ? 'OPEN' : 'MISS', null, null));
+    const bars = series[trade.pair].m5;
+    const extra = bars.slice(trade.armIndex + 1, Math.min(bars.length, trade.armIndex + 1 + 160));
+    const chart = extendChart(trade.candles, trade.marks, extra);
+    const row = asTrade(trade, trade.filled ? 'OPEN' : 'MISS', null, null);
+    row.candles = chart.candles;
+    row.marks = chart.marks;
+    trades.push(row);
   }
   if (opts.onProgress) opts.onProgress(timeline.length, timeline.length);
   return summarize(config.pairs, trades, timeline[0] ?? endTime, endTime, barMs);
@@ -325,8 +333,7 @@ export function extendChart(
   extra: Candle[],
 ): { candles: Candle[]; marks: ChartMark[] } {
   if (extra.length === 0) return { candles, marks };
-  const room = Math.max(0, CHART_BARS - candles.length);
-  const merged = candles.concat(extra.slice(0, room));
+  const merged = candles.concat(extra);
   const last = Math.max(0, merged.length - 1);
   const next: ChartMark[] = [];
   for (const mark of marks) {

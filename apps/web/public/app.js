@@ -221,7 +221,7 @@ function showTrade(id, scroll) {
   document.querySelector('#bt-title').textContent = `${trade.pair} ${trade.side} ${trade.outcome} · ${ukTime(trade.entryTime)} · entry ${money(trade.entry)} · ${gbp(trade.pnlGbp)}`;
   tradeChart.setSeries(trade.candles, trade.marks, 300_000);
   tradeChart.setTimeframe(liveTf);
-  tradeChart.fit();
+  tradeChart.frameSetup();
   if (scroll) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -320,7 +320,7 @@ function showGate() {
     .then((res) => res.json())
     .then((cfg) => {
       if (!cfg.clientId) {
-        note.textContent = 'Sign-in is not configured. Set GOOGLE_CLIENT_ID and restart. The desk stays closed until then.';
+        note.textContent = `Google sign-in guards this desk. Set GOOGLE_CLIENT_ID and restart. Authorized JavaScript origin: ${location.origin}`;
         return;
       }
       const script = document.createElement('script');
@@ -387,7 +387,7 @@ function clearKeyInputs() {
 bindTimeframes(document.querySelector('#live-tfs'));
 bindTimeframes(document.querySelector('#bt-tfs'));
 document.querySelector('#live-fit').addEventListener('click', () => liveChart.fit());
-document.querySelector('#bt-fit').addEventListener('click', () => tradeChart.fit());
+document.querySelector('#bt-fit').addEventListener('click', () => tradeChart.frameSetup());
 
 document.querySelector('#export').addEventListener('click', async () => {
   const res = await fetch('/api/review');

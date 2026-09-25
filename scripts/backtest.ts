@@ -56,14 +56,7 @@ const report = await runBacktest(config, series, {
     console.log(`replay ${done}/${total}`);
   },
 });
-const slim = {
-  ...report,
-  trades: report.trades.map((trade) => ({
-    ...trade,
-    candles: trade.candles.slice(-80),
-  })),
-};
-writeFileSync(outPath, JSON.stringify(slim));
+writeFileSync(outPath, JSON.stringify(report));
 const seconds = ((Date.now() - started) / 1000).toFixed(1);
 console.log(
   `${report.from} → ${report.to}  wins ${report.wins}  losses ${report.losses}  misses ${report.misses}  open ${report.open}  winRate ${

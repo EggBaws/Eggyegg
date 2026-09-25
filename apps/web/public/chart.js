@@ -73,34 +73,43 @@ function mountChart(canvas) {
     return mapped;
   }
 
+  function pinLive() {
+    view.count = Math.max(4, Math.min(view.count || 80, view.agg.length));
+    view.start = Math.max(0, view.agg.length - view.count);
+  }
+
   function rebuild(keepTime) {
-    const prev = keepTime ? span() : null;
+    const prev = keepTime && !view.stick ? span() : null;
     view.agg = aggregate(view.source, view.mult);
     view.drawn = mapMarks(view.agg);
     if (!view.agg.length) return;
-    if (view.stick || !prev) {
-      view.count = Math.min(view.stick ? view.count : view.agg.length, view.agg.length);
-      if (view.count < 20) view.count = Math.min(20, view.agg.length);
-      view.start = Math.max(0, view.agg.length - view.count);
-      return;
-    }
-    applySpan(prev);
+    if (!prev) pinLive();
+    else applySpan(prev);
+  }
+
+  function barStep() {
+    return (view.barMs || 300_000) * (view.mult || 1);
   }
 
   function span() {
     if (!view.agg.length) return null;
-    const a = view.agg[Math.max(0, Math.floor(view.start))];
-    const b = view.agg[Math.min(view.agg.length - 1, Math.ceil(view.start + view.count) - 1)];
-    if (!a || !b) return null;
-    return { from: a.time, to: b.time + view.barMs * view.mult };
+    const step = barStep();
+    const n = view.agg.length;
+    const i0 = Math.max(0, Math.min(n - 1, Math.floor(view.start)));
+    const i1 = Math.max(i0, Math.min(n - 1, Math.ceil(view.start + view.count) - 1));
+    return {
+      from: view.agg[i0].time,
+      to: view.agg[i1].time + step,
+      aheadMs: Math.max(0, view.start + view.count - n) * step,
+    };
   }
 
   function applySpan(range) {
-    const step = view.barMs * view.mult;
+    const step = barStep();
     let from = 0;
     let to = view.agg.length - 1;
     for (let i = 0; i < view.agg.length; i++) {
-      if (view.agg[i].time + step > range.from) {
+      if (view.agg[i].time >= range.from - step / 2) {
         from = i;
         break;
       }
@@ -112,17 +121,21 @@ function mountChart(canvas) {
       }
     }
     view.start = from;
-    view.count = Math.max(8, Math.min(view.agg.length, to - from + 1));
+    view.count = Math.max(4, to - from + 1);
+    if (range.aheadMs > step / 2) view.start += range.aheadMs / step;
     clamp();
   }
 
   function clamp() {
     const n = view.agg.length;
     if (!n) return;
-    view.count = Math.max(8, Math.min(n, view.count));
+    view.count = Math.max(4, Math.min(n, view.count));
+    const ahead = Math.min(96, Math.max(12, view.count * 0.75));
     if (view.start < 0) view.start = 0;
-    if (view.start + view.count > n) view.start = Math.max(0, n - view.count);
-    view.stick = view.start + view.count >= n - 0.5;
+    const maxStart = Math.max(0, n + ahead - view.count);
+    if (view.start > maxStart) view.start = maxStart;
+    const pin = Math.max(0, n - view.count);
+    view.stick = Math.abs(view.start - pin) < 0.8;
   }
 
   function plotBox() {
@@ -228,7 +241,8 @@ function mountChart(canvas) {
         continue;
       }
       const x1 = xOf(mark.fromIndex);
-      const x2 = xOf(Math.min(view.agg.length, mark.toIndex + 1));
+      const endIndex = mark.toIndex >= view.agg.length - 1 ? view.start + view.count : mark.toIndex + 1;
+      const x2 = xOf(endIndex);
       const y = yOf(mark.price);
       ctx.strokeStyle = CHART_COLORS[mark.color] ?? '#fff';
       ctx.setLineDash(mark.kind === 'NECK' ? [3, 3] : []);
@@ -242,10 +256,15 @@ function mountChart(canvas) {
     }
 
     const step = Math.max(1, Math.round(view.count / 6));
-    for (let i = 0; i < rows.length; i += step) {
-      const candle = rows[i];
+    const last = view.agg[view.agg.length - 1];
+    const future = barStep();
+    for (let index = Math.floor(view.start / step) * step; index < view.start + view.count; index += step) {
+      if (index < 0) continue;
+      const x = xOf(index);
+      if (x < box.left - 8 || x > box.right - 8) continue;
+      const time = index < view.agg.length ? view.agg[index].time : last.time + (index - (view.agg.length - 1)) * future;
       ctx.fillStyle = '#9aab90';
-      ctx.fillText(fmtTime(candle.time), xOf(from + i), box.bottom + 16);
+      ctx.fillText(fmtTime(time), x, box.bottom + 16);
     }
 
     if (view.cross) {
@@ -261,19 +280,24 @@ function mountChart(canvas) {
         ctx.stroke();
         ctx.setLineDash([]);
         const price = max - ((y - box.top) / (box.bottom - box.top)) * (max - min);
-        const index = Math.min(view.agg.length - 1, Math.max(0, Math.floor(view.start + (x - box.left) / slot)));
-        const candle = view.agg[index];
+        const index = Math.floor(view.start + (x - box.left) / slot);
+        const candle = index >= 0 && index < view.agg.length ? view.agg[index] : null;
         ctx.fillStyle = '#1a2118';
         ctx.fillRect(box.right, y - 8, 68, 16);
         ctx.fillStyle = '#e7f0df';
         ctx.fillText(fmtPrice(price), box.right + 4, y + 4);
-        if (candle) {
-          const label = `${fmtTime(candle.time)}  O ${fmtPrice(candle.open)}  H ${fmtPrice(candle.high)}  L ${fmtPrice(candle.low)}  C ${fmtPrice(candle.close)}`;
-          ctx.fillStyle = '#1a2118';
-          ctx.fillRect(box.left, 0, ctx.measureText(label).width + 10, 16);
-          ctx.fillStyle = '#e7f0df';
-          ctx.fillText(label, box.left + 4, 12);
-        }
+        const when = candle
+          ? candle.time
+          : view.agg.length
+            ? view.agg[view.agg.length - 1].time + (index - (view.agg.length - 1)) * barStep()
+            : 0;
+        const label = candle
+          ? `${fmtTime(candle.time)}  O ${fmtPrice(candle.open)}  H ${fmtPrice(candle.high)}  L ${fmtPrice(candle.low)}  C ${fmtPrice(candle.close)}`
+          : `${fmtTime(when)}  ahead`;
+        ctx.fillStyle = '#1a2118';
+        ctx.fillRect(box.left, 0, ctx.measureText(label).width + 10, 16);
+        ctx.fillStyle = '#e7f0df';
+        ctx.fillText(label, box.left + 4, 12);
       }
     }
   }
@@ -378,6 +402,19 @@ function mountChart(canvas) {
     view.stick = true;
     view.count = Math.min(120, view.agg.length || 120);
     view.start = Math.max(0, view.agg.length - view.count);
+    clamp();
+    draw();
+  }
+
+  function frameSetup() {
+    view.stick = false;
+    const n = view.agg.length;
+    if (!n) return;
+    view.count = Math.min(72, n);
+    const entry = view.drawn.find((mark) => mark.kind === 'ENTRY');
+    const idx = entry ? entry.fromIndex : Math.round(n * 0.4);
+    view.start = idx - view.count * 0.32;
+    clamp();
     draw();
   }
 
@@ -392,12 +429,18 @@ function mountChart(canvas) {
       draw();
     },
     setTimeframe(mult) {
+      const prev = view.stick ? null : span();
       view.mult = mult;
-      view.stick = view.stick;
-      rebuild(true);
+      view.agg = aggregate(view.source, view.mult);
+      view.drawn = mapMarks(view.agg);
+      if (view.agg.length) {
+        if (!prev) pinLive();
+        else applySpan(prev);
+      }
       draw();
     },
     fit,
+    frameSetup,
     label() {
       return view.mult === 1 ? '5m' : view.mult === 3 ? '15m' : view.mult === 12 ? '1h' : '4h';
     },
