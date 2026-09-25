@@ -49,18 +49,18 @@ Order type is always `LIMIT`. Client order id is `choke-v1-{pair}-{yyyymmdd}` in
 
 The page reads `logs/backtest.json` and lists wins, losses, win rate, and net. Click a trade to see that window with FVG, BOS, MSS, entry, TP, and SL on the candles that produced them. Cached klines live in `data/` and are not committed. Set `BACKTEST_REFRESH=1` to download again.
 
-Paying replay, 25 Mar 2026 → 24 Sep 2026. Target is 0.04% of entry. The tape closes flat.
+Paying replay, 25 Mar 2026 → 24 Sep 2026. Target is 1.33% of entry. One trade is still open at the end of the tape.
 
 | | Wins | Losses | Misses | Win rate | Net |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Book | 230 | 30 | 6 | 88.5% | +£96.76 |
-| BTCUSDT | 52 | 6 | 1 | 89.7% | +£83.61 |
-| ETHUSDT | 96 | 11 | 2 | 89.7% | +£51.94 |
-| SOLUSDT | 82 | 13 | 3 | 86.3% | −£38.78 |
+| Book | 67 | 164 | 6 | 29.0% | +£3,507.80 |
+| BTCUSDT | 14 | 38 | 1 | 26.9% | +£781.84 |
+| ETHUSDT | 29 | 69 | 2 | 29.6% | +£1,563.88 |
+| SOLUSDT | 24 | 57 | 3 | 29.6% | +£1,162.08 |
 
-Wins by UK month: March 12 (from the 25th), April 53, May 32, June 39, July 48, August 29, September 17 (through the 24th).
+Wins by UK month: March 4 (from the 25th), April 16, May 5, June 16, July 11, August 8, September 7 (through the 24th).
 
-The target is the lever for the win count and the loss count. On this tape, 0.50% paid 113 times and lost 131 (+£1,549.67). Each step closer adds wins and removes losses, and each win pays less. 0.04% is the closest target that is still green: 230 wins, 30 losses, +£96.76. 0.03% is 232 wins and 28 losses, and the book loses £90. The neck floor, the 4 hour 40 minute retest, and the 0.175% stop floor stay. A deeper entry and a tighter wick both add losses.
+Profit is the sort, then the win count. A 0.04% target won 230 and lost 30 (88.5%) for +£96.76, and SOL longs lost money because each win paid about £4. On this tape the profit peaks at 1.33%: +£3,507.80, with 67 wins. SOL is +£1,162.08, and both SOL sides are positive. The neighbours pay less (1.32% is +£3,422.52, 1.34% is +£3,421.81). The neck floor, the 4 hour 40 minute retest, and the 0.175% stop floor stay. Raising that stop floor at this target cut the profit.
 
 What the replay kept:
 
@@ -71,7 +71,7 @@ What the replay kept:
 - A pair may arm three different chokes in one UK day, after the earlier one has closed. A second tag of the same box is still `SECOND_ON_SAME_BOX`.
 - `FAKE_NECK`, `CHASE`, `NO_SWEEP`, `FAT_STOP` above 6% margin at 10x, `ALREADY_USED`, and `DAILY_KILL` are unchanged. A clock is still not a spit reason.
 
-The ETH morning example still arms: entry 2650.20, stop 2639.20, target 2651.26.
+The ETH morning example still arms: entry 2650.20, stop 2639.20, target 2685.45.
 
 ## Config
 
@@ -85,7 +85,7 @@ The ETH morning example still arms: entry 2650.20, stop 2639.20, target 2651.26.
 | `stake_gbp` | `1000` | Paper stake. Sizing uses this figure against USDT distance with no FX conversion |
 | `leverage` | `10` | Margin risk and notional |
 | `max_margin_risk` | `0.06` | 6% of stake. Wider than this is `NEED_DEEPER`, not a fill |
-| `tp_price_pct` | `0.0004` | 0.04% of entry. Closest target on this tape that still pays |
+| `tp_price_pct` | `0.0133` | 1.33% of entry. Profit peak on this tape |
 | `window_start` / `window_end` | `null` | Disabled |
 | `timezone` | `Europe/London` | Stamps and the order-id date |
 | `first_tag` | `true` | First tag of the box after it exists |
@@ -98,7 +98,7 @@ The ETH morning example still arms: entry 2650.20, stop 2639.20, target 2651.26.
 
 `btc_aligned` is true when BTC's 5m printed a sweep on the same UK date in the same direction. ETH or SOL can `ARM` while it is false.
 
-Take profit is `entry * (1 ± 0.0004)`. The stop is one tick beyond the sweep wick. Quantity is the minimum of stake × leverage and the size whose stop loss is about stake × 6%.
+Take profit is `entry * (1 ± 0.0133)`. The stop is one tick beyond the sweep wick. Quantity is the minimum of stake × leverage and the size whose stop loss is about stake × 6%.
 
 ## States
 
@@ -121,7 +121,7 @@ Marks are placed on the candles that created them:
 - sky — BOS, the smash close through the neck. Without that close the smash is not complete and the pair does not arm
 - green — entry, from the bar after the smash
 - red — stop
-- blue — 0.04% target
+- blue — 1.33% target
 - grey dashed — last price when it is not inside the zone
 
 MSS is the smash candle. BOS is the same candle when its close breaks the neck, and that close is now required before the smash counts.

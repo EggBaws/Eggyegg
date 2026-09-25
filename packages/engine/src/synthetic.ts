@@ -9,7 +9,7 @@ const FIVE = 5 * 60_000;
  *
  * Sweep wick 2639.21 undercuts swing 2645.
  * First touch of the FVG is 2654, but the live price is 2650.20 so the limit rests there.
- * Stop is one tick past the sweep wick: 2639.20. TP = 2650.20 * 1.0004 = 2651.26.
+ * Stop is one tick past the sweep wick: 2639.20. TP = 2650.20 * 1.0133 = 2685.45.
  */
 export const ETH_T0 = Date.parse('2026-09-24T06:00:00.000Z');
 

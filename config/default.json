@@ -5,7 +5,7 @@
   "stake_gbp": 1000,
   "leverage": 10,
   "max_margin_risk": 0.06,
-  "tp_price_pct": 0.0004,
+  "tp_price_pct": 0.0133,
   "window_start": null,
   "window_end": null,
   "timezone": "Europe/London",

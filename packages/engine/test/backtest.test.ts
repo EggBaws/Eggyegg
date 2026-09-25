@@ -19,9 +19,9 @@ function shift(candles: Candle[], delta: number): Candle[] {
 describe('backtest', () => {
   it('scores a win and a same-bar stop-and-target loss on two UK days', async () => {
     const config = loadConfig(join(findRepoRoot(), 'config/default.json'));
-    const winBar = candle(ETH_T0 + 12 * FIVE, 2652, 2682, 2649.9, 2680);
+    const winBar = candle(ETH_T0 + 12 * FIVE, 2652, 2690, 2649.9, 2686);
     const day2 = ETH_T0 + DAY;
-    const lossBar = candle(day2 + 12 * FIVE, 2652, 2682, 2630, 2644);
+    const lossBar = candle(day2 + 12 * FIVE, 2652, 2690, 2630, 2644);
     const eth = ethLongCandles().concat([winBar], shift(ethLongCandles(day2), 0), [lossBar]);
     const hourly = ethHourly().concat(shift(ethHourly(day2), 0));
     const empty: Candle[] = [];
