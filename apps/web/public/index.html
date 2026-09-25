@@ -56,7 +56,7 @@
       <button id="live-toggle" type="button">Start live fires</button>
       <p id="live-note" class="muted">Live fires are off. Starting sends LIMIT orders with a stop and a target to your MEXC account. Market orders are never sent.</p>
     </div>
-    <p class="window-note">Fire window off — detection runs all day. The badge is status. The button is the only live switch, and it stays off until you confirm. The chart is the order: entry, stop, and target are the LIMIT that goes to MEXC when live fires are on. This Google account stays in step across its signed-in screens.</p>
+    <p class="window-note">Fire window off — detection runs all day. The badge is status. The button is the only live switch, and it stays off until you confirm. The chart is the order: entry, structure stop, 1.33% lock, and 1.83% target. The LIMIT sent to MEXC rests the structure stop and the further target. When 1.33% trades, the stop moves to the lock. This Google account stays in step across its signed-in screens.</p>
     <section class="review keys" id="keys">
       <div class="detail-head">
         <h2>MEXC keys</h2>
@@ -94,6 +94,7 @@
         <span class="swatch sky">BOS</span>
         <span class="swatch green">ENTRY</span>
         <span class="swatch red">SL</span>
+        <span class="swatch gold">lock</span>
         <span class="swatch blue">TP</span>
       </div>
       <div class="chart-frame"><canvas id="live-canvas"></canvas></div>
@@ -107,7 +108,7 @@
         <h2>Six-month backtest</h2>
         <p id="bt-range" class="muted"></p>
       </div>
-      <p class="window-note">Walk-forward on MEXC 5m candles. A fill waits until the bar after the signal. The smash must close through a neck at least 0.15% of price, and the retest has to print within 4 hours 40 minutes. The limit is the first touch of the gap. The stop is one tick past the sweep and at least 0.175% of entry. The target is 1.33% of entry. A pair may arm up to three chokes in a UK day.</p>
+      <p class="window-note">Walk-forward on MEXC 5m candles. A fill waits until the bar after the signal. The smash must close through a neck at least 0.15% of price, and the retest has to print within 4 hours 40 minutes. The limit is the first touch of the gap. The stop is one tick past the sweep and at least 0.175% of entry. The 1.33% price is the lock, and the resting target is 1.83%. When 1.33% trades, the stop moves there. The book below is the published replay, which closed at 1.33%. A pair may arm up to three chokes in a UK day.</p>
       <div id="bt-summary" class="stats"></div>
       <div id="bt-pairs"></div>
       <div class="table-wrap" id="bt-table"></div>
@@ -132,6 +133,7 @@
           <span class="swatch sky">BOS</span>
           <span class="swatch green">ENTRY</span>
           <span class="swatch red">SL</span>
+          <span class="swatch gold">lock</span>
           <span class="swatch blue">TP</span>
         </div>
         <div class="chart-frame"><canvas id="bt-chart"></canvas></div>

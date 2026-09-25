@@ -67,7 +67,7 @@ Order type is always `LIMIT`. Client order id is `choke-v1-{pair}-{yyyymmdd}` in
 
 The page reads `logs/backtest.json` and lists wins, losses, win rate, and net. Click a trade to see that window with FVG, BOS, MSS, entry, TP, and SL on the candles that produced them. Cached klines live in `data/` and are not committed. Set `BACKTEST_REFRESH=1` to download again.
 
-Paying replay, 25 Mar 2026 → 24 Sep 2026. Target is 1.33% of entry. One trade is still open at the end of the tape.
+Paying replay, 25 Mar 2026 → 24 Sep 2026, with the target closed at 1.33% of entry. One trade is still open at the end of the tape. The order now rests 0.50% further and moves the stop to that 1.33% price when it trades, so a winner that comes back still closes there.
 
 | | Wins | Losses | Misses | Win rate | Net |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -89,7 +89,7 @@ What the replay kept:
 - A pair may arm three different chokes in one UK day, after the earlier one has closed. A second tag of the same box is still `SECOND_ON_SAME_BOX`.
 - `FAKE_NECK`, `CHASE`, `NO_SWEEP`, `FAT_STOP` above 6% margin at 10x, `ALREADY_USED`, and `DAILY_KILL` are unchanged. A clock is still not a spit reason.
 
-The ETH morning example still arms: entry 2650.20, stop 2639.20, target 2685.45.
+The ETH morning example still arms: entry 2650.20, stop 2639.20, lock 2685.45, target 2698.70.
 
 ## Config
 
@@ -103,7 +103,8 @@ The ETH morning example still arms: entry 2650.20, stop 2639.20, target 2685.45.
 | `stake_gbp` | `1000` | Paper stake. Sizing uses this figure against USDT distance with no FX conversion |
 | `leverage` | `10` | Margin risk and notional |
 | `max_margin_risk` | `0.06` | 6% of stake. Wider than this is `NEED_DEEPER`, not a fill |
-| `tp_price_pct` | `0.0133` | 1.33% of entry. Profit peak on this tape |
+| `tp_price_pct` | `0.0133` | Lock. When price trades 1.33%, the stop moves to that price |
+| `runner_extra_pct` | `0.005` | Resting target is 1.83% of entry. A return to the lock still closes there |
 | `window_start` / `window_end` | `null` | Disabled |
 | `timezone` | `Europe/London` | Stamps and the order-id date |
 | `first_tag` | `true` | First tag of the box after it exists |
@@ -116,7 +117,7 @@ The ETH morning example still arms: entry 2650.20, stop 2639.20, target 2685.45.
 
 `btc_aligned` is true when BTC's 5m printed a sweep on the same UK date in the same direction. ETH or SOL can `ARM` while it is false.
 
-Take profit is `entry * (1 ± 0.0133)`. The stop is one tick beyond the sweep wick. Quantity is the minimum of stake × leverage and the size whose stop loss is about stake × 6%.
+The resting target is `entry * (1 ± 0.0183)`. The stop starts one tick beyond the sweep wick. Once price trades the 1.33% lock, that stop moves to the lock, on the chart and on the MEXC order. A pullback to the lock closes the 1.33% win. A hold through 1.83% takes the further target. Quantity is the minimum of stake × leverage and the size whose stop loss is about stake × 6%.
 
 ## States
 
@@ -138,8 +139,9 @@ Marks are placed on the candles that created them:
 - amber — MSS, the smash candle (close back through the sweep body)
 - sky — BOS, the smash close through the neck. Without that close the smash is not complete and the pair does not arm
 - green — entry, from the bar after the smash
-- red — stop
-- blue — 1.33% target
+- red — stop. After the lock it sits on the 1.33% price
+- gold dashed — 1.33% lock
+- blue — 1.83% runner target
 - grey dashed — last price when it is not inside the zone
 
 MSS is the smash candle. BOS is the same candle when its close breaks the neck, and that close is now required before the smash counts.

@@ -106,7 +106,8 @@ function render() {
       <dl>
         <dt>State</dt><dd class="state">${pair.state}${pair.reason ? ` · ${pair.reason}` : ''}</dd>
         <dt>Zone</dt><dd>${zoneText(pair.zone)}</dd>
-        <dt>SL</dt><dd>${money(pair.sl)}</dd>
+        <dt>SL</dt><dd>${money(pair.sl)}${pair.locked ? ' locked' : ''}</dd>
+        <dt>Lock</dt><dd>${money(pair.lock)}</dd>
         <dt>TP</dt><dd>${money(pair.tp)}</dd>
         <dt>BTC aligned</dt><dd>${pair.btcAligned ? 'YES' : 'NO'}</dd>
         <dt>Last ping</dt><dd>${pair.lastPing ? escapeHtml(pair.lastPing.split('\n')[0]) : '—'}</dd>
@@ -199,7 +200,8 @@ async function loadLiveChart() {
   if (data.entry != null) {
     const side = data.side === 'short' ? 'sell' : 'buy';
     const sent = data.liveArmed ? 'armed LIMIT for MEXC' : 'LIVE off — this LIMIT is not sent';
-    order.textContent = `${side} ${money(data.entry)} · SL ${money(data.sl)} · TP ${money(data.tp)} · ${sent}`;
+    const lock = data.lock != null ? ` · lock ${money(data.lock)}` : '';
+    order.textContent = `${side} ${money(data.entry)} · SL ${money(data.sl)}${data.locked ? ' locked' : ''}${lock} · TP ${money(data.tp)} · ${sent}`;
   } else {
     order.textContent = 'No entry yet. Sweep, FVG, MSS, and BOS paint as they form. Nothing is sent until live fires are on.';
   }

@@ -33,6 +33,8 @@ export interface AppConfig {
   leverage: number;
   max_margin_risk: number;
   tp_price_pct: number;
+  /** Added to tp_price_pct for the resting target. The stop moves to tp_price_pct when that price trades. */
+  runner_extra_pct: number;
   window_start: number | null;
   window_end: number | null;
   timezone: 'Europe/London';
@@ -58,6 +60,9 @@ export interface OrderDraft {
   price: number;
   qty: number;
   sl: number;
+  /** Price where the stop moves once the trade has traded this far. The 1.33% lock. */
+  lockPrice: number;
+  /** Resting target beyond the lock. A return to lockPrice closes at the lock. */
   tp: number;
   reduceOnlySlTp: true;
   liveArmed: boolean;

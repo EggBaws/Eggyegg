@@ -20,9 +20,10 @@ describe('backtest', () => {
   it('scores a win and a same-bar stop-and-target loss on two UK days', async () => {
     const config = loadConfig(join(findRepoRoot(), 'config/default.json'));
     const winBar = candle(ETH_T0 + 12 * FIVE, 2652, 2690, 2649.9, 2686);
+    const backToLock = candle(ETH_T0 + 13 * FIVE, 2686, 2688, 2685, 2686);
     const day2 = ETH_T0 + DAY;
     const lossBar = candle(day2 + 12 * FIVE, 2652, 2690, 2630, 2644);
-    const eth = ethLongCandles().concat([winBar], shift(ethLongCandles(day2), 0), [lossBar]);
+    const eth = ethLongCandles().concat([winBar, backToLock], shift(ethLongCandles(day2), 0), [lossBar]);
     const hourly = ethHourly().concat(shift(ethHourly(day2), 0));
     const empty: Candle[] = [];
     const series = {
@@ -40,6 +41,10 @@ describe('backtest', () => {
     assert.ok(wins[0].pnlGbp > 0);
     assert.ok(losses[0].pnlGbp < 0);
     assert.equal(losses[0].exitPrice, losses[0].sl);
+    assert.equal(wins[0].exitPrice, wins[0].sl);
+    assert.ok(wins[0].tp > wins[0].exitPrice);
+    assert.equal(wins[0].marks.find((m) => m.kind === 'SL')?.price, wins[0].lock);
+    assert.ok(wins[0].marks.some((m) => m.kind === 'LOCK'));
     assert.ok(wins[0].marks.some((m) => m.kind === 'FVG'));
     assert.ok(wins[0].marks.some((m) => m.kind === 'BOS'));
     assert.ok(wins[0].marks.some((m) => m.kind === 'MSS'));

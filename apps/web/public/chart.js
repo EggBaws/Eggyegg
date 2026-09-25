@@ -8,6 +8,7 @@ const CHART_COLORS = {
   grey: '#94a3b8',
   amber: '#fbbf24',
   sky: '#38bdf8',
+  gold: '#eab308',
 };
 
 function mountChart(canvas) {
@@ -245,7 +246,7 @@ function mountChart(canvas) {
       const x2 = xOf(endIndex);
       const y = yOf(mark.price);
       ctx.strokeStyle = CHART_COLORS[mark.color] ?? '#fff';
-      ctx.setLineDash(mark.kind === 'NECK' ? [3, 3] : []);
+      ctx.setLineDash(mark.kind === 'NECK' || mark.kind === 'LOCK' ? [3, 3] : []);
       ctx.beginPath();
       ctx.moveTo(Math.max(box.left, x1), y);
       ctx.lineTo(Math.min(box.right, x2), y);

@@ -17,7 +17,8 @@ describe('chart marks', () => {
       structure,
       entry: 2650,
       sl: 2641.99,
-      tp: 2679.68,
+      lock: 2679.68,
+      tp: 2708.8,
       neck: structure.neck?.line ?? null,
     });
     const fvg = marks.find((m) => m.kind === 'FVG');
@@ -31,7 +32,8 @@ describe('chart marks', () => {
     assert.equal(bos?.price, 2668);
     assert.equal(marks.find((m) => m.kind === 'ENTRY')?.price, 2650);
     assert.equal(marks.find((m) => m.kind === 'SL')?.price, 2641.99);
-    assert.equal(marks.find((m) => m.kind === 'TP')?.price, 2679.68);
+    assert.equal(marks.find((m) => m.kind === 'LOCK')?.price, 2679.68);
+    assert.equal(marks.find((m) => m.kind === 'TP')?.price, 2708.8);
     const entry = marks.find((m) => m.kind === 'ENTRY');
     assert.equal(entry?.fromIndex, (structure.smash?.index ?? 0) + 1);
   });

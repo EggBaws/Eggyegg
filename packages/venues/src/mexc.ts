@@ -83,6 +83,28 @@ export function liveStopGate(confirm: string): { stop: boolean; message: string 
 export interface MexcLiveAdapter extends VenueAdapter {
   cancelExternal(pair: string, externalOid: string): Promise<{ ok: boolean; error?: string }>;
   pingAccount(): Promise<boolean>;
+  orderFilled(orderId: string): Promise<boolean>;
+  moveProtection(req: { pair: string; orderId: string; sl: number; tp: number }): Promise<{ ok: boolean; error?: string }>;
+}
+
+/** Move the stop to the lock and keep the runner target on an existing limit. Latest price. */
+export function mexcChangeProtectionJson(
+  pair: string,
+  orderId: string,
+  sl: number,
+  tp: number,
+): { json: string } | { error: string } {
+  const id = Number(orderId);
+  if (!Number.isInteger(id) || id <= 0) return { error: 'BAD_ORDER' };
+  if (!specOf(pair)) return { error: 'UNKNOWN_PAIR' };
+  const body = {
+    orderId: id,
+    stopLossPrice: roundExchangePrice(pair, sl),
+    takeProfitPrice: roundExchangePrice(pair, tp),
+    lossTrend: 1,
+    profitTrend: 1,
+  };
+  return { json: JSON.stringify(body) };
 }
 
 export function createMexcLive(opts: {
@@ -154,6 +176,20 @@ export function createMexcLive(opts: {
       }
       const orderId = res.data == null ? undefined : String(res.data);
       return { ok: true, orderId, clientOrderId: req.clientOrderId };
+    },
+    async orderFilled(orderId: string) {
+      const id = Number(orderId);
+      if (!Number.isInteger(id) || id <= 0) return false;
+      const res = await call('GET', `/api/v1/private/order/get/${id}`, '');
+      if (!res.ok || res.data == null || typeof res.data !== 'object') return false;
+      const row = res.data as { state?: number; dealVol?: number };
+      return row.state === 3 || (typeof row.dealVol === 'number' && row.dealVol > 0);
+    },
+    async moveProtection(req: { pair: string; orderId: string; sl: number; tp: number }) {
+      const built = mexcChangeProtectionJson(req.pair, req.orderId, req.sl, req.tp);
+      if ('error' in built) return { ok: false, error: built.error };
+      const res = await call('POST', '/api/v1/private/stoporder/change_price', built.json);
+      return res.ok ? { ok: true } : { ok: false, error: res.message ?? 'AMEND_FAILED' };
     },
     async cancelExternal(pair: string, externalOid: string) {
       const spec = specOf(pair);

@@ -1,7 +1,7 @@
 import type { Candle, Side, Structure } from './types.ts';
 
 export interface ChartMark {
-  kind: 'FVG' | 'BOS' | 'MSS' | 'ENTRY' | 'TP' | 'SL' | 'SWEEP' | 'NECK';
+  kind: 'FVG' | 'BOS' | 'MSS' | 'ENTRY' | 'TP' | 'SL' | 'SWEEP' | 'NECK' | 'LOCK';
   label: string;
   color: string;
   fromIndex: number;
@@ -15,6 +15,8 @@ export interface MarkInput {
   structure: Structure;
   entry: number | null;
   sl: number | null;
+  /** 1.33% price. The stop moves here once it trades. */
+  lock: number | null;
   tp: number | null;
   neck: number | null;
 }
@@ -109,6 +111,16 @@ export function buildChartMarks(input: MarkInput): ChartMark[] {
       fromIndex: Math.min(fromEntry, last),
       toIndex: last,
       price: input.sl,
+    });
+  }
+  if (input.lock != null) {
+    marks.push({
+      kind: 'LOCK',
+      label: 'lock',
+      color: 'gold',
+      fromIndex: Math.min(fromEntry, last),
+      toIndex: last,
+      price: input.lock,
     });
   }
   if (input.tp != null) {

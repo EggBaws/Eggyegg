@@ -72,7 +72,9 @@ describe('engine dry-run', () => {
     }
     assert.equal(eth?.marks.find((m) => m.kind === 'ENTRY')?.price, 2650.2);
     assert.equal(eth?.marks.find((m) => m.kind === 'SL')?.price, 2639.2);
-    assert.equal(eth?.marks.find((m) => m.kind === 'TP')?.price, 2685.45);
+    assert.equal(eth?.marks.find((m) => m.kind === 'LOCK')?.price, 2685.45);
+    assert.equal(eth?.marks.find((m) => m.kind === 'TP')?.price, 2698.7);
+    assert.equal(eth?.locked, false);
     assert.equal(eth?.marks.find((m) => m.kind === 'FVG')?.price, 2650);
 
     const orders = readOrderLog(log);
@@ -84,7 +86,8 @@ describe('engine dry-run', () => {
     assert.equal(order.side, 'buy');
     assert.equal(order.price, 2650.2);
     assert.equal(order.sl, 2639.2);
-    assert.equal(order.tp, 2685.45);
+    assert.equal(order.lockPrice, 2685.45);
+    assert.equal(order.tp, 2698.7);
     assert.equal(order.reduceOnlySlTp, true);
     assert.equal(order.liveArmed, false);
     assert.equal(order.reason, 'LIVE_OFF');
@@ -133,6 +136,72 @@ describe('engine dry-run', () => {
     const entries = readOrderLog(log);
     assert.equal(entries.length, 1);
     assert.equal('action' in entries[0] && entries[0].action, 'cancel');
+  });
+
+  it('moves the paper stop to the 1.33% lock and leaves the runner target', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'choke-'));
+    const engine = new ChokeEngine({
+      config,
+      venue: venue('kucoin'),
+      notifier: memoryNotifier(),
+      dryRunPath: join(dir, 'orders.json'),
+    });
+    const book = demoBook();
+    await engine.runBook(book.updates);
+    const ethUpdate = book.updates.filter((u) => u.pair === 'ETHUSDT').at(-1);
+    if (!ethUpdate) throw new Error('missing eth');
+    const atEntry = await engine.ingest({ ...ethUpdate, lastPrice: 2650.2, nowMs: ethUpdate.nowMs + 60_000 });
+    assert.equal(atEntry.locked, false);
+    assert.equal(atEntry.sl, 2639.2);
+    const locked = await engine.ingest({ ...ethUpdate, lastPrice: 2690, nowMs: ethUpdate.nowMs + 120_000 });
+    assert.equal(locked.locked, true);
+    assert.equal(locked.sl, 2685.45);
+    assert.equal(locked.lock, 2685.45);
+    assert.equal(locked.tp, 2698.7);
+    assert.equal(locked.marks.find((m) => m.kind === 'SL')?.price, 2685.45);
+    assert.equal(locked.marks.find((m) => m.kind === 'TP')?.price, 2698.7);
+  });
+
+  it('amends the MEXC stop only after the limit has filled', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'choke-'));
+    let filled = false;
+    const moves: { orderId: string; sl: number; tp: number }[] = [];
+    const engine = new ChokeEngine({
+      config,
+      venue: {
+        id: 'mexc',
+        health: () => ({ ok: true }),
+        placeLimitWithProtection() {
+          return { ok: true, orderId: '99' };
+        },
+        orderFilled() {
+          return filled;
+        },
+        moveProtection(req) {
+          moves.push(req);
+          return { ok: true };
+        },
+      },
+      notifier: memoryNotifier(),
+      dryRunPath: join(dir, 'orders.json'),
+    });
+    engine.setLiveArmed(true);
+    const book = demoBook();
+    await engine.runBook(book.updates);
+    const ethUpdate = book.updates.filter((u) => u.pair === 'ETHUSDT').at(-1);
+    if (!ethUpdate) throw new Error('missing eth');
+    await engine.ingest({ ...ethUpdate, lastPrice: 2690, nowMs: ethUpdate.nowMs + 60_000 });
+    assert.equal(moves.length, 0);
+    filled = true;
+    await engine.ingest({ ...ethUpdate, lastPrice: 2650.2, nowMs: ethUpdate.nowMs + 120_000 });
+    assert.equal(moves.length, 0);
+    const view = await engine.ingest({ ...ethUpdate, lastPrice: 2690, nowMs: ethUpdate.nowMs + 180_000 });
+    assert.equal(moves.length, 1);
+    assert.equal(moves[0].orderId, '99');
+    assert.equal(moves[0].sl, 2685.45);
+    assert.equal(moves[0].tp, 2698.7);
+    assert.equal(view.locked, true);
+    assert.equal(view.sl, 2685.45);
   });
 
   it('paints a stale refresh without writing an order', async () => {

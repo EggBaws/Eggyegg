@@ -6,6 +6,7 @@ import {
   createMexcLive,
   liveArmGate,
   liveStopGate,
+  mexcChangeProtectionJson,
   mexcSubmitJson,
   parseMexcKlines,
   signMexc,
@@ -44,6 +45,15 @@ describe('mexc live adapter', () => {
     assert.equal(body.externalOid, req.clientOrderId);
     assert.equal(body.stopLossPrice, 2641.99);
     assert.equal(body.takeProfitPrice, 2679.68);
+    const moved = mexcChangeProtectionJson('ETHUSDT', '99', 2685.45, 2698.77);
+    if (!('json' in moved)) throw new Error('expected json');
+    const change = JSON.parse(moved.json) as Record<string, unknown>;
+    assert.equal(change.orderId, 99);
+    assert.equal(change.stopLossPrice, 2685.45);
+    assert.equal(change.takeProfitPrice, 2698.77);
+    assert.equal(change.lossTrend, 1);
+    assert.equal(change.profitTrend, 1);
+    assert.equal('error' in mexcChangeProtectionJson('ETHUSDT', 'nope', 1, 2) && true, true);
     assert.equal(body.leverage, 10);
     const market = mexcSubmitJson({ ...req, type: 'MARKET' as 'LIMIT' }, 10);
     assert.equal('error' in market && market.error, 'MARKET_FORBIDDEN');
@@ -86,6 +96,18 @@ describe('mexc live adapter', () => {
     assert.equal(tiny.ok, false);
     assert.equal(tiny.error, 'VOL_BELOW_MIN');
     assert.equal(calls.length, 1);
+
+    calls.length = 0;
+    const open = await venue.orderFilled('99');
+    assert.equal(open, false);
+    assert.match(calls[0].url, /\/api\/v1\/private\/order\/get\/99$/);
+    calls.length = 0;
+    const movedLive = await venue.moveProtection({ pair: 'ETHUSDT', orderId: '99', sl: 2685.45, tp: 2698.77 });
+    assert.equal(movedLive.ok, true);
+    assert.match(calls[0].url, /\/api\/v1\/private\/stoporder\/change_price$/);
+    const changeBody = JSON.parse(calls[0].body ?? '{}') as { stopLossPrice: number; takeProfitPrice: number };
+    assert.equal(changeBody.stopLossPrice, 2685.45);
+    assert.equal(changeBody.takeProfitPrice, 2698.77);
 
     const cancelled = await venue.cancelExternal('ETHUSDT', req.clientOrderId);
     assert.equal(cancelled.ok, true);

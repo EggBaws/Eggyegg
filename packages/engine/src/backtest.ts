@@ -1,4 +1,5 @@
 import type { ChartMark } from './marks.ts';
+import { stepProtect } from './runner.ts';
 import { positionQty } from './risk.ts';
 import { ukDateIso, ukDateKey } from './time.ts';
 import type { AppConfig, Candle, PairId, Side } from './types.ts';
@@ -19,6 +20,7 @@ export interface BacktestTrade {
   exitTime: number | null;
   entry: number;
   sl: number;
+  lock: number;
   tp: number;
   qty: number;
   outcome: 'WIN' | 'LOSS' | 'MISS' | 'OPEN';
@@ -65,11 +67,13 @@ interface OpenTrade {
   entryTime: number;
   entry: number;
   sl: number;
+  lock: number;
   tp: number;
   qty: number;
   candles: Candle[];
   marks: ChartMark[];
   filled: boolean;
+  locked: boolean;
 }
 
 /**
@@ -126,10 +130,18 @@ export async function runBacktest(
         continue;
       }
       if (idx <= trade.armIndex) continue;
-      const outcome = resolveBar(trade, bars[idx]);
-      if (!outcome) continue;
-      const exitPrice = outcome === 'WIN' ? trade.tp : trade.sl;
+      const step = stepProtect(trade, bars[idx]);
+      trade.filled = step.filled;
+      trade.locked = step.locked;
+      if (!step.outcome || step.exit == null) continue;
+      const outcome = step.outcome;
+      const exitPrice = step.exit;
       const pnl = paperPnl(trade.side, trade.qty, trade.entry, exitPrice);
+      if (trade.locked) {
+        for (const mark of trade.marks) {
+          if (mark.kind === 'SL') mark.price = trade.lock;
+        }
+      }
       const followEnd = Math.min(bars.length, idx + 1 + AHEAD_BARS);
       const chart = extendChart(trade.candles, trade.marks, bars.slice(trade.armIndex + 1, followEnd));
       engine.realizePnl(pnl, nowMs);
@@ -180,11 +192,13 @@ export async function runBacktest(
           entryTime: time,
           entry: rt.order.price,
           sl: rt.order.sl,
+          lock: rt.order.lockPrice,
           tp: rt.order.tp,
           qty: rt.order.qty,
           candles: frozen.candles,
           marks: frozen.marks,
           filled: false,
+          locked: false,
         });
       }
     }
@@ -195,6 +209,11 @@ export async function runBacktest(
   for (const trade of open.values()) {
     const bars = series[trade.pair].m5;
     const extra = bars.slice(trade.armIndex + 1, Math.min(bars.length, trade.armIndex + 1 + 160));
+    if (trade.locked) {
+      for (const mark of trade.marks) {
+        if (mark.kind === 'SL') mark.price = trade.lock;
+      }
+    }
     const chart = extendChart(trade.candles, trade.marks, extra);
     const row = asTrade(trade, trade.filled ? 'OPEN' : 'MISS', null, null);
     row.candles = chart.candles;
@@ -214,20 +233,6 @@ export function stakeQty(config: AppConfig, entry: number, sl: number): number {
   return positionQty(config.stake_gbp, config.leverage, entry, sl, config.max_margin_risk);
 }
 
-function resolveBar(trade: OpenTrade, bar: Candle): 'WIN' | 'LOSS' | null {
-  const long = trade.side === 'long';
-  if (!trade.filled) {
-    const tagged = long ? bar.low <= trade.entry : bar.high >= trade.entry;
-    if (!tagged) return null;
-    trade.filled = true;
-  }
-  const hitSl = long ? bar.low <= trade.sl : bar.high >= trade.sl;
-  const hitTp = long ? bar.high >= trade.tp : bar.low <= trade.tp;
-  if (hitSl) return 'LOSS';
-  if (hitTp) return 'WIN';
-  return null;
-}
-
 function asTrade(
   trade: OpenTrade,
   outcome: BacktestTrade['outcome'],
@@ -242,7 +247,8 @@ function asTrade(
     entryTime: trade.entryTime,
     exitTime,
     entry: trade.entry,
-    sl: trade.sl,
+    sl: trade.locked ? trade.lock : trade.sl,
+    lock: trade.lock,
     tp: trade.tp,
     qty: trade.qty,
     outcome,

@@ -27,6 +27,7 @@ export function loadConfig(path: string): AppConfig {
     leverage: num(raw.leverage, 'leverage'),
     max_margin_risk: num(raw.max_margin_risk, 'max_margin_risk'),
     tp_price_pct: num(raw.tp_price_pct, 'tp_price_pct'),
+    runner_extra_pct: raw.runner_extra_pct == null ? 0.005 : num(raw.runner_extra_pct, 'runner_extra_pct'),
     window_start: raw.window_start ?? null,
     window_end: raw.window_end ?? null,
     timezone: 'Europe/London',

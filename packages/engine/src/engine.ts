@@ -15,6 +15,7 @@ import { appendOrderLog } from './dryRun.ts';
 import { holidayAt } from './holidays.ts';
 import { formatPrice, roundToTick } from './math.ts';
 import { acceptableEntry, isFatStop, marginRiskPct, positionQty, stopLoss, takeProfit } from './risk.ts';
+import { priceReached } from './runner.ts';
 import { selectProfile, selectiveFacts, stopIsWideEnough, stopIsWithinCap, stopProtects } from './select.ts';
 import { initialRuntime, muteRuntime, stepPair, type PairRuntime, type SetupFacts } from './stateMachine.ts';
 import { buildChartMarks } from './marks.ts';
@@ -50,6 +51,24 @@ export interface VenuePort {
         cancelledBecauseSlFailed?: boolean;
         error?: string;
       }>;
+  orderFilled?(orderId: string): boolean | Promise<boolean>;
+  moveProtection?(req: { pair: string; orderId: string; sl: number; tp: number }):
+    | { ok: boolean; error?: string }
+    | Promise<{ ok: boolean; error?: string }>;
+}
+
+interface RunnerTrack {
+  orderId: string | null;
+  clientOrderId: string;
+  side: Side;
+  entry: number;
+  sl: number;
+  lock: number;
+  tp: number;
+  filled: boolean;
+  locked: boolean;
+  armedMs: number;
+  armCandleTime: number;
 }
 
 export interface NotifyEvent {
@@ -87,6 +106,7 @@ interface PairRecord {
   lastSetup: SetupFacts | null;
   lastPrice: number;
   nowMs: number;
+  runner: RunnerTrack | null;
 }
 
 export interface BookSnapshot {
@@ -134,6 +154,7 @@ export class ChokeEngine {
         lastSetup: null,
         lastPrice: 0,
         nowMs: 0,
+        runner: null,
       });
     }
   }
@@ -184,6 +205,7 @@ export class ChokeEngine {
     this.records.set(pair, {
       ...rec,
       runtime,
+      runner: null,
       view: { ...rec.view, state: 'FLAT', reason, review: reviewOf('FLAT') },
       nowMs,
     });
@@ -281,8 +303,8 @@ export class ChokeEngine {
       side,
     };
 
-    const draft = priced.entry != null && priced.sl != null && priced.tp != null && side
-      ? this.draftOrder(update, side, priced.entry, priced.sl, priced.tp, btcAligned)
+    const draft = priced.entry != null && priced.sl != null && priced.lock != null && priced.tp != null && side
+      ? this.draftOrder(update, side, priced.entry, priced.sl, priced.lock, priced.tp, btcAligned)
       : null;
 
     const rec = this.must(update.pair);
@@ -298,8 +320,10 @@ export class ChokeEngine {
     });
 
     let runtime = stepped.runtime;
+    let runner = rec.runner;
     if (stepped.order && !this.liveArmed) {
       this.logOrder(stepped.order);
+      runner = trackFrom(stepped.order, null, update);
     } else if (stepped.order && this.liveArmed) {
       this.venueCalls += 1;
       let placed: { ok: boolean; orderId?: string; cancelledBecauseSlFailed?: boolean; error?: string };
@@ -339,6 +363,7 @@ export class ChokeEngine {
         });
       } else {
         this.logOrder({ ...stepped.order, mode: 'live', reason: 'LIVE', liveArmed: true });
+        runner = trackFrom(stepped.order, placed.orderId ?? null, update);
       }
     }
     if (stepped.cancel && rec.runtime.order) {
@@ -353,16 +378,24 @@ export class ChokeEngine {
         tsUk: ukStamp(update.nowMs),
         tsMs: update.nowMs,
       });
+      runner = null;
+    }
+    if (runtime.state === 'WORKING' && runtime.order && runner && runner.clientOrderId === runtime.order.clientOrderId) {
+      runner = await this.advanceRunner(update.pair, runner, update);
+    } else if (runtime.state !== 'WORKING') {
+      runner = null;
     }
 
     this.emitPings(update.pair, update.nowMs, stepped.entered, runtime.lastPing, stepped.holidayPing);
-    const view = this.makeView(update, selected.candles, selected.timeframe, structure, btcAligned, priced, runtime, h1Ma5);
+    const shown = this.shownPrices(priced, runtime, runner);
+    const view = this.makeView(update, selected.candles, selected.timeframe, structure, btcAligned, shown, runtime, h1Ma5);
     this.records.set(update.pair, {
       runtime,
       view,
       lastSetup: setup,
       lastPrice: update.lastPrice,
       nowMs: update.nowMs,
+      runner,
     });
     return view;
   }
@@ -386,6 +419,7 @@ export class ChokeEngine {
     this.records.set(pair, {
       ...rec,
       runtime: stepped.runtime,
+      runner: null,
       view: { ...rec.view, state: stepped.runtime.state, reason: stepped.runtime.reason, review: reviewOf(stepped.runtime.state), lastPing: stepped.runtime.lastPing },
       nowMs,
     });
@@ -424,6 +458,7 @@ export class ChokeEngine {
       this.records.set(pair, {
         ...rec,
         runtime: stepped.runtime,
+        runner: null,
         view: {
           ...rec.view,
           state: 'BLOCKED',
@@ -442,6 +477,7 @@ export class ChokeEngine {
     side: Side,
     entry: number,
     sl: number,
+    lock: number,
     tp: number,
     btcAligned: boolean,
   ): OrderDraft {
@@ -454,6 +490,7 @@ export class ChokeEngine {
       price: entry,
       qty: positionQty(this.config.stake_gbp, this.config.leverage, entry, sl, this.config.max_margin_risk),
       sl,
+      lockPrice: lock,
       tp,
       reduceOnlySlTp: true,
       liveArmed: live,
@@ -532,16 +569,20 @@ export class ChokeEngine {
     const zone = priced.zone;
     const inside = inZone(update.lastPrice, zone);
     const tick = this.config.ticks[update.pair];
+    const activeSl = priced.locked ? priced.lock : priced.sl;
     const stamp = stampLine({
       pair: update.pair,
       state: runtime.state,
       sweep: priced.sweep,
       zone,
-      sl: priced.sl,
+      sl: activeSl,
+      lock: priced.lock,
+      locked: priced.locked,
       marginRiskPct: priced.entry != null && priced.sl != null ? marginRiskPct(priced.entry, priced.sl, this.config.leverage) : null,
       leverage: this.config.leverage,
       tp: priced.tp,
       tpPricePct: this.config.tp_price_pct,
+      runnerPricePct: this.config.tp_price_pct + this.config.runner_extra_pct,
       btcAligned,
       nowMs: update.nowMs,
       tick,
@@ -554,7 +595,9 @@ export class ChokeEngine {
       btcAligned,
       liveArmed: this.liveArmed,
       zone,
-      sl: priced.sl,
+      sl: activeSl,
+      lock: priced.lock,
+      locked: priced.locked,
       tp: priced.tp,
       entry: priced.entry,
       marginRiskPct: priced.entry != null && priced.sl != null ? marginRiskPct(priced.entry, priced.sl, this.config.leverage) : null,
@@ -577,7 +620,8 @@ export class ChokeEngine {
         neck: priced.neck,
         fvg: priced.fvg,
         zone,
-        sl: priced.sl,
+        sl: activeSl,
+        lock: priced.lock,
         tp: priced.tp,
         lastPrice: update.lastPrice,
         inZone: inside,
@@ -586,11 +630,69 @@ export class ChokeEngine {
         candles,
         structure,
         entry: priced.entry,
-        sl: priced.sl,
+        sl: activeSl,
+        lock: priced.lock,
         tp: priced.tp,
         neck: priced.neck,
       }),
     };
+  }
+
+  private shownPrices(priced: Priced, runtime: PairRuntime, runner: RunnerTrack | null): Priced {
+    if (runtime.state !== 'WORKING' || !runtime.order || !runner) return priced;
+    if (runner.clientOrderId !== runtime.order.clientOrderId) return priced;
+    return {
+      ...priced,
+      entry: runner.entry,
+      sl: runner.sl,
+      lock: runner.lock,
+      tp: runner.tp,
+      locked: runner.locked,
+    };
+  }
+
+  private async advanceRunner(pair: PairId, track: RunnerTrack, update: MarketUpdate): Promise<RunnerTrack> {
+    const next: RunnerTrack = { ...track };
+    const latest = update.candles5m[update.candles5m.length - 1];
+    const laterBar = latest != null && latest.time > next.armCandleTime ? latest : null;
+    if (!next.filled) {
+      if (this.liveArmed) {
+        if (next.orderId && this.venue.orderFilled) {
+          next.filled = await Promise.resolve(this.venue.orderFilled(next.orderId));
+        }
+      } else if (update.nowMs > next.armedMs) {
+        const byLast = priceReached(next.side, update.lastPrice, next.entry, false);
+        const byBar = laterBar != null && (next.side === 'long' ? laterBar.low <= next.entry : laterBar.high >= next.entry);
+        next.filled = byLast || byBar;
+      }
+    }
+    if (!next.filled || next.locked) return next;
+    const byLast = priceReached(next.side, update.lastPrice, next.lock, true);
+    const byBar = laterBar != null && (next.side === 'long' ? laterBar.high >= next.lock : laterBar.low <= next.lock);
+    if (!byLast && !byBar) return next;
+    if (this.liveArmed) {
+      if (!next.orderId || !this.venue.moveProtection) return next;
+      let moved: { ok: boolean; error?: string };
+      try {
+        moved = await Promise.resolve(
+          this.venue.moveProtection({ pair, orderId: next.orderId, sl: next.lock, tp: next.tp }),
+        );
+      } catch {
+        return next;
+      }
+      if (!moved.ok) return next;
+    }
+    next.locked = true;
+    const tick = this.config.ticks[pair];
+    this.notifier.ping({
+      pair,
+      state: 'WORKING',
+      level: 'info',
+      body: `${pair} stop moved to ${formatPrice(next.lock, tick)}. Target stays ${formatPrice(next.tp, tick)}.`,
+      tsMs: update.nowMs,
+      tsUk: ukStamp(update.nowMs),
+    });
+    return next;
   }
 
   private must(pair: PairId): PairRecord {
@@ -610,6 +712,8 @@ interface Priced {
   zone: Zone | null;
   entry: number | null;
   sl: number | null;
+  lock: number | null;
+  locked: boolean;
   tp: number | null;
   sweep: number | null;
   neck: number | null;
@@ -633,6 +737,8 @@ function priceSetup(args: {
     zone: null,
     entry: null,
     sl: null,
+    lock: null,
+    locked: false,
     tp: null,
     sweep: structure.sweep?.price ?? null,
     neck: structure.neck?.line ?? null,
@@ -671,18 +777,37 @@ function priceSetup(args: {
       ? deeperLimit(side, acceptable, lastPrice, tick)
       : roundToTick(cap, tick, side === 'long' ? 'floor' : 'ceil')
     : restingLimit(side, cap, lastPrice, tick);
-  const tp = takeProfit(side, entry, config.tp_price_pct, tick);
+  const lock = takeProfit(side, entry, config.tp_price_pct, tick);
+  const tp = takeProfit(side, entry, config.tp_price_pct + config.runner_extra_pct, tick);
   const tradableStop = stopProtects(side, entry, sl) && stopIsWideEnough(entry, sl) && stopIsWithinCap(entry, sl);
   return {
     ...base,
     zone,
     entry,
     sl,
+    lock,
     tp,
     tagged: tagged && tradableStop,
     chase,
     fatStop,
     deeperReached: deeperReached && tradableStop,
+  };
+}
+
+function trackFrom(order: OrderDraft, orderId: string | null, update: MarketUpdate): RunnerTrack {
+  const latest = update.candles5m[update.candles5m.length - 1];
+  return {
+    orderId,
+    clientOrderId: order.clientOrderId,
+    side: order.side === 'buy' ? 'long' : 'short',
+    entry: order.price,
+    sl: order.sl,
+    lock: order.lockPrice,
+    tp: order.tp,
+    filled: false,
+    locked: false,
+    armedMs: update.nowMs,
+    armCandleTime: latest?.time ?? update.nowMs,
   };
 }
 
@@ -727,11 +852,13 @@ export function formatArmPing(order: OrderDraft, tick: number): string {
   const verb = order.side === 'buy' ? 'buy' : 'sell';
   const pct = (order.marginRiskPct * 100).toFixed(1);
   const live = order.liveArmed ? 'sent' : 'dry-run | sent';
+  const ofEntry = (level: number) => `${((Math.abs(level - order.price) / order.price) * 100).toFixed(2)}%`;
   return [
     `${name} ARM first-tag`,
     `${verb} ${formatPrice(order.price, tick)}`,
     `sl ${formatPrice(order.sl, tick)} (${pct}% margin @${order.leverage}x)`,
-    `tp ${formatPrice(order.tp, tick)} (${(order.tpPricePct * 100).toFixed(2)}%)`,
+    `lock ${formatPrice(order.lockPrice, tick)} (${ofEntry(order.lockPrice)})`,
+    `tp ${formatPrice(order.tp, tick)} (${ofEntry(order.tp)})`,
     `btc_aligned: ${order.btcAligned ? 'yes' : 'no'}`,
     `LIVE: ${live}`,
   ].join('\n');
@@ -747,6 +874,8 @@ function emptyView(pair: PairId, config: AppConfig): PairOverlay {
     liveArmed: config.live_armed,
     zone: null,
     sl: null,
+    lock: null,
+    locked: false,
     tp: null,
     entry: null,
     marginRiskPct: null,

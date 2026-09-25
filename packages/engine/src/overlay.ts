@@ -21,6 +21,8 @@ export interface PairOverlay {
   liveArmed: boolean;
   zone: Zone | null;
   sl: number | null;
+  lock: number | null;
+  locked: boolean;
   tp: number | null;
   entry: number | null;
   marginRiskPct: number | null;
@@ -55,6 +57,7 @@ export function buildLevels(input: {
   fvg: { low: number; high: number } | null;
   zone: Zone | null;
   sl: number | null;
+  lock: number | null;
   tp: number | null;
   lastPrice: number;
   inZone: boolean;
@@ -65,6 +68,7 @@ export function buildLevels(input: {
   if (input.fvg) levels.push({ low: input.fvg.low, high: input.fvg.high, color: 'purple', label: 'FVG' });
   if (input.zone) levels.push({ low: input.zone.low, high: input.zone.high, color: 'green', label: 'zone' });
   if (input.sl != null) levels.push({ price: input.sl, color: 'red', label: 'SL' });
+  if (input.lock != null) levels.push({ price: input.lock, color: 'gold', label: 'lock' });
   if (input.tp != null) levels.push({ price: input.tp, color: 'blue', label: 'TP' });
   if (!input.inZone) {
     levels.push({ price: input.lastPrice, color: 'grey', label: 'NOW', dashed: true });
@@ -83,10 +87,13 @@ export function stampLine(input: {
   sweep: number | null;
   zone: Zone | null;
   sl: number | null;
+  lock: number | null;
+  locked: boolean;
   marginRiskPct: number | null;
   leverage: number;
   tp: number | null;
   tpPricePct: number;
+  runnerPricePct: number;
   btcAligned: boolean;
   nowMs: number;
   tick: number;
@@ -96,12 +103,15 @@ export function stampLine(input: {
     input.zone == null ? '—' : `${formatPrice(input.zone.low, input.tick)}–${formatPrice(input.zone.high, input.tick)}`;
   const risk =
     input.marginRiskPct == null ? '—' : `${(input.marginRiskPct * 100).toFixed(1)}% margin @${input.leverage}x`;
-  const tpPct = `${(input.tpPricePct * 100).toFixed(2)}%`;
+  const lockPct = `${(input.tpPricePct * 100).toFixed(2)}%`;
+  const tpPct = `${(input.runnerPricePct * 100).toFixed(2)}%`;
+  const slText = input.locked ? `sl ${px(input.sl)} (locked at ${lockPct})` : `sl ${px(input.sl)} (${risk})`;
   return [
     `${input.pair} ${input.state}`,
     `sweep ${px(input.sweep)}`,
     `zone ${zone}`,
-    `sl ${px(input.sl)} (${risk})`,
+    slText,
+    `lock ${px(input.lock)} (${lockPct})`,
     `tp ${px(input.tp)} (${tpPct})`,
     `btc_aligned ${input.btcAligned ? 'yes' : 'no'}`,
     `clock ${ukClock(input.nowMs)}`,

@@ -6,6 +6,7 @@
   "leverage": 10,
   "max_margin_risk": 0.06,
   "tp_price_pct": 0.0133,
+  "runner_extra_pct": 0.005,
   "window_start": null,
   "window_end": null,
   "timezone": "Europe/London",

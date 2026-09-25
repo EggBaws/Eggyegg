@@ -125,6 +125,7 @@ body:not(.locked) #gate { display: none; }
 .grey { color: #94a3b8; }
 .amber { color: #fbbf24; }
 .sky { color: #38bdf8; }
+.gold { color: #eab308; }
 .live-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 8px 0 4px; }
 .live-bar button.armed { background: #3a1212; border-color: #a33; }
 .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 12px; }

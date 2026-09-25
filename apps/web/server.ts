@@ -210,6 +210,8 @@ function chartPayload(pair: PairId) {
     marks,
     entry: view?.entry ?? null,
     sl: view?.sl ?? null,
+    lock: view?.lock ?? null,
+    locked: view?.locked ?? false,
     tp: view?.tp ?? null,
     side: view?.side ?? null,
     state: view?.state ?? 'FLAT',
