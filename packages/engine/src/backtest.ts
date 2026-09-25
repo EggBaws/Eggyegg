@@ -80,9 +80,10 @@ interface OpenTrade {
 export async function runBacktest(
   config: AppConfig,
   series: Record<PairId, PairSeries>,
-  opts: { window?: number; onProgress?: (done: number, total: number) => void } = {},
+  opts: { window?: number; barMs?: number; onProgress?: (done: number, total: number) => void } = {},
 ): Promise<BacktestReport> {
   const window = opts.window ?? WINDOW;
+  const barMs = opts.barMs ?? FIVE;
   const engine = new ChokeEngine({
     config,
     venue: paperVenue(),
@@ -108,7 +109,7 @@ export async function runBacktest(
 
   for (let n = 0; n < timeline.length; n++) {
     const time = timeline[n];
-    const nowMs = time + FIVE + 500;
+    const nowMs = time + barMs + 500;
     const day = ukDateKey(nowMs);
 
     for (const pair of config.pairs) {
@@ -132,7 +133,7 @@ export async function runBacktest(
       engine.realizePnl(pnl, nowMs);
       engine.markClosed(pair, nowMs);
       trades.push({
-        ...asTrade(trade, outcome, exitPrice, bars[idx].time + FIVE),
+        ...asTrade(trade, outcome, exitPrice, bars[idx].time + barMs),
         pnlGbp: pnl,
         candles: chart.candles,
         marks: chart.marks,
@@ -193,7 +194,7 @@ export async function runBacktest(
     trades.push(asTrade(trade, trade.filled ? 'OPEN' : 'MISS', null, null));
   }
   if (opts.onProgress) opts.onProgress(timeline.length, timeline.length);
-  return summarize(config.pairs, trades, timeline[0] ?? endTime, endTime);
+  return summarize(config.pairs, trades, timeline[0] ?? endTime, endTime, barMs);
 }
 
 export function paperPnl(side: Side, qty: number, entry: number, exit: number): number {
@@ -244,7 +245,7 @@ function asTrade(
   };
 }
 
-function summarize(pairs: PairId[], trades: BacktestTrade[], fromMs: number, toMs: number): BacktestReport {
+function summarize(pairs: PairId[], trades: BacktestTrade[], fromMs: number, toMs: number, barMs = FIVE): BacktestReport {
   const byPair = {} as Record<PairId, PairScore>;
   for (const pair of pairs) byPair[pair] = { wins: 0, losses: 0, misses: 0, open: 0, netPnlGbp: 0 };
   let wins = 0;
@@ -276,7 +277,7 @@ function summarize(pairs: PairId[], trades: BacktestTrade[], fromMs: number, toM
   return {
     generatedAt: new Date().toISOString(),
     from: fromMs ? ukDateIso(fromMs) : '',
-    to: toMs ? ukDateIso(toMs + FIVE) : '',
+    to: toMs ? ukDateIso(toMs + barMs) : '',
     fromMs,
     toMs,
     wins,

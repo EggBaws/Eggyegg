@@ -49,27 +49,28 @@ Order type is always `LIMIT`. Client order id is `choke-v1-{pair}-{yyyymmdd}` in
 
 The page reads `logs/backtest.json` and lists wins, losses, win rate, and net. Click a trade to see that window with FVG, BOS, MSS, entry, TP, and SL on the candles that produced them. Cached klines live in `data/` and are not committed. Set `BACKTEST_REFRESH=1` to download again.
 
-Paying replay, 25 Mar 2026 → 24 Sep 2026:
+Paying replay, 25 Mar 2026 → 24 Sep 2026. Target is 0.50% of entry. One trade is still open at the end of the tape.
 
 | | Wins | Losses | Misses | Win rate | Net |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Book | 49 | 84 | 5 | 36.8% | +£3,027.01 |
-| BTCUSDT | 13 | 20 | 1 | 39.4% | +£903.52 |
-| ETHUSDT | 20 | 34 | 1 | 37.0% | +£1,250.50 |
-| SOLUSDT | 16 | 30 | 3 | 34.8% | +£872.99 |
+| Book | 116 | 161 | 7 | 41.9% | +£1,086.42 |
+| BTCUSDT | 26 | 36 | 2 | 41.9% | +£382.32 |
+| ETHUSDT | 50 | 70 | 2 | 41.7% | +£476.83 |
+| SOLUSDT | 40 | 55 | 3 | 42.1% | +£227.26 |
 
-The untouched book was 22 wins and 208 losses (9.6%, +£333). The prior paying book was 59 wins and 164 losses (26.5%, +£1,630.76). The same six months now win more often and about twice the paper net.
+Wins by UK month: March 6 (from the 25th), April 24, May 16, June 24, July 21, August 16, September 9 (through the 24th). The full months sit inside 16–24.
 
-What changed, after replaying the filter grid on the cached 5m tape:
+The 1.12% target on this same 5m tape paid 49 times (+£3,027.01). Opening the filters at 1.12% still topped out around 12 wins in a full month, and a 3-minute book at 1.12% lost money. 0.50% is the target that puts a full month in the 15–25 range. Each win pays less, so the paper net is lower than the 1.12% book.
 
-- The limit is the first touch of the FVG, not the deep edge. A later 1-tick sweep no longer hides an earlier choke that already cleared the floors.
-- The smash still has to close through the neck. Neck height under 0.10% of the sweep stays FORMING.
+What the replay kept:
+
+- The limit is the first touch of the FVG. The smash still has to close through a neck at least 0.10% of the sweep.
 - A 2-candle or 3-candle gap both count. No gap is still `NO_FVG`.
-- The stop is one tick past the sweep wick. A later wick does not pull it in. A stop closer than 0.20% of entry is noise. A stop at least 0.50% of entry does not pay the 1.12% target often enough, so that setup stays unarmed. A stop on the profit side of the entry is not filled.
-- The retest has to print within 16 closed 5m bars of the smash (80 minutes). Older displacement stays FORMING so the pair can arm a later choke. Neighbours from 14 to 24 bars land in the same region, about 48–51 wins and +£3,000.
-- `FAKE_NECK`, `CHASE` (more than 0.4 × neck height), `NO_SWEEP`, `FAT_STOP` above 6% margin at 10x, `SECOND_ON_SAME_BOX`, `ALREADY_USED`, and `DAILY_KILL` are unchanged. Target stays 1.12%. A clock is still not a spit reason.
+- The stop is one tick past the sweep wick, and at least 0.15% of entry. A stop on the profit side of the entry is not filled.
+- A pair may arm three different chokes in one UK day, after the earlier one has closed. A second tag of the same box is still `SECOND_ON_SAME_BOX`.
+- `FAKE_NECK`, `CHASE`, `NO_SWEEP`, `FAT_STOP` above 6% margin at 10x, `ALREADY_USED`, and `DAILY_KILL` are unchanged. A clock is still not a spit reason.
 
-The ETH morning example still arms: entry 2650.20, stop 2639.20, target 2679.88.
+The ETH morning example still arms: entry 2650.20, stop 2639.20, target 2663.45.
 
 ## Config
 
@@ -83,20 +84,20 @@ The ETH morning example still arms: entry 2650.20, stop 2639.20, target 2679.88.
 | `stake_gbp` | `1000` | Paper stake. Sizing uses this figure against USDT distance with no FX conversion |
 | `leverage` | `10` | Margin risk and notional |
 | `max_margin_risk` | `0.06` | 6% of stake. Wider than this is `NEED_DEEPER`, not a fill |
-| `tp_price_pct` | `0.0112` | Frozen 1.12% of entry |
+| `tp_price_pct` | `0.005` | 0.50% of entry. This is the target that pays 15–25 times in a full month |
 | `window_start` / `window_end` | `null` | Disabled |
 | `timezone` | `Europe/London` | Stamps and the order-id date |
 | `first_tag` | `true` | First tag of the box after it exists |
 | `btc_align_required` | `false` | Locked off. `btc_aligned` is displayed and stored on the order |
-| `max_arms_per_pair_per_day` | `1` | Second arm the same UK day is `ALREADY_USED` |
-| `max_fills_across_book` | `3` | Further arms go `BLOCKED` |
+| `max_arms_per_pair_per_day` | `3` | A fourth arm the same UK day is `ALREADY_USED` |
+| `max_fills_across_book` | `9` | Further arms go `BLOCKED` |
 | `dry_run_log` | `./logs/orders.json` | Append-only order JSON |
 | `chase_neck_frac` | `0.4` | Price that leaves the zone by more than this fraction of neck height is `CHASE` |
 | `stale_close_ms` | `2000` | A 5m close older than this does not fire. The chart still paints |
 
 `btc_aligned` is true when BTC's 5m printed a sweep on the same UK date in the same direction. ETH or SOL can `ARM` while it is false.
 
-Take profit is `entry * (1 ± 0.0112)`. The stop is one tick beyond the sweep wick. Quantity is the minimum of stake × leverage and the size whose stop loss is about stake × 6%.
+Take profit is `entry * (1 ± 0.005)`. The stop is one tick beyond the sweep wick. Quantity is the minimum of stake × leverage and the size whose stop loss is about stake × 6%.
 
 ## States
 
@@ -119,7 +120,7 @@ Marks are placed on the candles that created them:
 - sky — BOS, the smash close through the neck. Without that close the smash is not complete and the pair does not arm
 - green — entry, from the bar after the smash
 - red — stop
-- blue — 1.12% target
+- blue — 0.50% target
 - grey dashed — last price when it is not inside the zone
 
 MSS is the smash candle. BOS is the same candle when its close breaks the neck, and that close is now required before the smash counts.
@@ -146,7 +147,7 @@ npm run score-fixtures
 
 A row is scored only when the id contains `YYYY-MM-DD` and `entry_time_uk` is set. The clock is Europe/London. The engine sees closed 5m bars up to that bar's close, plus 1h context. It does not build a 3m or 2m series when 5m is continuous. Undated rows are listed and left unscored.
 
-The latest run fired 0 of 18 dated rows. The nine green takes are 3m or 2m labels. On 5m at the entry bar they were `CHASE`, `NO_FVG`, `FAKE_NECK`, or `FORMING`, so they did not arm. The hard skip that used to arm because a clock is not a spit now stays `FAKE_NECK`. The score is `logs/fixture-score.json`.
+The latest run fired 2 of 18 dated rows. The nine green takes are 3m or 2m labels. On 5m at the entry bar they were `CHASE`, `NO_FVG`, `FAT_STOP`, or `FORMING`, so they did not arm. One warn row armed, and one hard skip armed, because a clock is not a spit reason. The score is `logs/fixture-score.json`.
 
 ## Out of scope
 

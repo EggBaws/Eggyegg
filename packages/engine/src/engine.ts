@@ -223,7 +223,13 @@ export class ChokeEngine {
     const tick = this.config.ticks[update.pair];
     const selected = selectStructureCandles(update.candles5m, update.candles3m);
     const sessionStart = ukMidnightMs(update.nowMs);
-    const structure = detectStructure(selected.candles, tick, sessionStart, selected.timeframe);
+    const prior = this.must(update.pair).runtime;
+    const skipSweepMs = new Set(prior.usedSweepMs);
+    if (prior.state === 'WORKING' && prior.boxId) {
+      const working = Number(prior.boxId.slice(prior.boxId.indexOf(':') + 1));
+      if (Number.isFinite(working)) skipSweepMs.delete(working);
+    }
+    const structure = detectStructure(selected.candles, tick, sessionStart, selected.timeframe, skipSweepMs);
     if (update.pair === 'BTCUSDT' && structure.sweep && structure.side) {
       this.btc = { side: structure.side, sessionDate: ukDateIso(structure.sweep.timeMs) };
     }

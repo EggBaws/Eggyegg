@@ -1,20 +1,19 @@
 import type { Candle, FvgBox, NeckPoint, Side, SmashPoint, Structure } from './types.ts';
 
 /**
- * Floors measured on the six-month MEXC tape.
+ * Floors measured on the six-month MEXC tape for a 0.50% target.
  * Neck at least 0.10% of the sweep, any real gap (2-candle or 3-candle).
- * Stop one tick past the sweep, between 0.20% and 0.50% of entry.
- * The retest must print within 16 closed 5m bars of the smash (80 minutes).
- * The limit sits on the first-touch edge of the gap.
- * The ETH morning book still clears this (stop ~0.42%, smash one bar before the signal).
+ * Stop one tick past the sweep and at least 0.15% of entry.
+ * The 1.12% target paid about eight times a month. 0.50% is what puts a full
+ * month inside 15–25 wins. The ETH morning book still clears this.
  */
 export const MIN_NECK_FRAC = 0.001;
 export const MIN_FVG_FRAC = 0;
-export const MIN_STOP_FRAC = 0.002;
-/** Stops at least this far from entry lose the 1.12% target too often to pay. */
-export const MAX_STOP_FRAC = 0.005;
+export const MIN_STOP_FRAC = 0.0015;
+/** 1 = off. A hard cap here cuts the monthly win count back under 15. */
+export const MAX_STOP_FRAC = 1;
 export const MAX_NECK_FRAC = 1;
-export const MAX_SMASH_AGE = 16;
+export const MAX_SMASH_AGE = 10_000;
 export const MAX_SWEEP_BARS = 10_000;
 
 export interface SelectProfile {
@@ -36,6 +35,9 @@ export interface SelectProfile {
   tighterWick: boolean;
   /** far = deep edge of the FVG. near = first-touch edge. mid = gap midpoint. */
   entryAnchor: 'far' | 'near' | 'mid';
+  /** Bars on each side of a swing. 2/2 is the choke swing. 1/1 finds more local sweeps. */
+  swingLeft: number;
+  swingRight: number;
 }
 
 const DEFAULT_PROFILE: SelectProfile = {
@@ -50,6 +52,8 @@ const DEFAULT_PROFILE: SelectProfile = {
   allowTwoCandle: true,
   tighterWick: false,
   entryAnchor: 'near',
+  swingLeft: 2,
+  swingRight: 2,
 };
 
 let active: SelectProfile = { ...DEFAULT_PROFILE };

@@ -13,6 +13,8 @@ export interface PairRuntime {
   consumed: boolean;
   armDay: string | null;
   armsToday: number;
+  /** Sweep open times already armed today. A later choke can still arm. */
+  usedSweepMs: number[];
   transitions: TransitionLog[];
   order: OrderDraft | null;
   warnings: string[];
@@ -73,6 +75,7 @@ export function initialRuntime(pair: PairId): PairRuntime {
     consumed: false,
     armDay: null,
     armsToday: 0,
+    usedSweepMs: [],
     transitions: [],
     order: null,
     warnings: [],
@@ -157,10 +160,12 @@ export function stepPair(runtime: PairRuntime, input: StepInput): StepResult {
     const armBody = input.armPingBody ?? `${rt.pair} ARM`;
     rt = move(rt, 'ARM', decision.reason, input, entered, armBody);
     rt = move(rt, 'WORKING', decision.reason, input, entered, null);
+    const sweepMs = sweepMsOf(input.setup.boxId);
     rt = {
       ...rt,
       consumed: true,
       armsToday: rt.armsToday + 1,
+      usedSweepMs: sweepMs == null ? rt.usedSweepMs : [...rt.usedSweepMs, sweepMs],
       order: input.draft,
       side: input.setup.side,
       boxId: input.setup.boxId,
@@ -191,6 +196,12 @@ export function muteRuntime(runtime: PairRuntime, nowMs: number, lastPrice: numb
   return { runtime: rt, order: null, cancel, entered, holidayPing: null };
 }
 
+function sweepMsOf(boxId: string | null): number | null {
+  if (!boxId) return null;
+  const n = Number(boxId.slice(boxId.indexOf(':') + 1));
+  return Number.isFinite(n) ? n : null;
+}
+
 function rollDay(runtime: PairRuntime, nowMs: number): PairRuntime {
   const day = ukDateKey(nowMs);
   if (runtime.armDay === day) return runtime;
@@ -198,6 +209,7 @@ function rollDay(runtime: PairRuntime, nowMs: number): PairRuntime {
     ...runtime,
     armDay: day,
     armsToday: 0,
+    usedSweepMs: [],
     muted: false,
     holidayWarned: false,
   };

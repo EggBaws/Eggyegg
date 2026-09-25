@@ -1,5 +1,5 @@
 import { EPS, gte, lte } from './math.ts';
-import { patternClears } from './select.ts';
+import { patternClears, selectProfile } from './select.ts';
 import type { Candle, FvgBox, NeckPoint, Side, SmashPoint, Structure, SwingPoint, SweepPoint, Zone } from './types.ts';
 
 export function candle(
@@ -218,8 +218,14 @@ interface SidePattern {
   invalidated: boolean;
 }
 
-function patternLong(candles: Candle[], tick: number, sessionStartMs: number): SidePattern | null {
-  const swings = swingLows(candles);
+function patternLong(
+  candles: Candle[],
+  tick: number,
+  sessionStartMs: number,
+  skipSweepMs: ReadonlySet<number>,
+): SidePattern | null {
+  const profile = selectProfile();
+  const swings = swingLows(candles, profile.swingLeft, profile.swingRight);
   const found: SidePattern[] = [];
   const seen = new Set<number>();
   for (const swing of swings) {
@@ -234,6 +240,7 @@ function patternLong(candles: Candle[], tick: number, sessionStartMs: number): S
     }
     if (sweepIndex < 0 || seen.has(sweepIndex)) continue;
     if (candles[sweepIndex].time < sessionStartMs) continue;
+    if (skipSweepMs.has(candles[sweepIndex].time)) continue;
     seen.add(sweepIndex);
     found.push(finishLong(candles, sweepIndex, swing, tick));
   }
@@ -267,8 +274,14 @@ function finishLong(
   return { sweep, smash, neck, fvg, fakeNeck: false, invalidated };
 }
 
-function patternShort(candles: Candle[], tick: number, sessionStartMs: number): SidePattern | null {
-  const swings = swingHighs(candles);
+function patternShort(
+  candles: Candle[],
+  tick: number,
+  sessionStartMs: number,
+  skipSweepMs: ReadonlySet<number>,
+): SidePattern | null {
+  const profile = selectProfile();
+  const swings = swingHighs(candles, profile.swingLeft, profile.swingRight);
   const found: SidePattern[] = [];
   const seen = new Set<number>();
   for (const swing of swings) {
@@ -283,6 +296,7 @@ function patternShort(candles: Candle[], tick: number, sessionStartMs: number): 
     }
     if (sweepIndex < 0 || seen.has(sweepIndex)) continue;
     if (candles[sweepIndex].time < sessionStartMs) continue;
+    if (skipSweepMs.has(candles[sweepIndex].time)) continue;
     seen.add(sweepIndex);
     const sweepC = candles[sweepIndex];
     const sweep: SweepPoint = {
@@ -334,9 +348,10 @@ export function detectStructure(
   tick: number,
   sessionStartMs: number,
   timeframe: '5m' | '3m' = '5m',
+  skipSweepMs: ReadonlySet<number> = new Set(),
 ): Structure {
-  const longP = patternLong(candles, tick, sessionStartMs);
-  const shortP = patternShort(candles, tick, sessionStartMs);
+  const longP = patternLong(candles, tick, sessionStartMs, skipSweepMs);
+  const shortP = patternShort(candles, tick, sessionStartMs, skipSweepMs);
   const chosen = chooseSide(longP, shortP);
   if (!chosen) {
     return {
