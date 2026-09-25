@@ -302,6 +302,7 @@ function applyPayload(data) {
 
 function showDesk(email) {
   document.body.classList.remove('locked');
+  document.querySelector('#desk').hidden = false;
   const account = document.querySelector('#account');
   account.textContent = `${email} · one session on every signed-in screen`;
   startPoll();
@@ -310,6 +311,7 @@ function showDesk(email) {
 
 function showGate() {
   document.body.classList.add('locked');
+  document.querySelector('#desk').hidden = true;
   stopPoll();
   const note = document.querySelector('#gate-note');
   if (googleMounted) return;

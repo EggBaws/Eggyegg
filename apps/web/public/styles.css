@@ -33,6 +33,7 @@ h1 { font-size: 1.6rem; }
 }
 #google-btn { min-height: 44px; margin: 16px 0; }
 body.locked #desk { display: none; }
+body:not(.locked) #desk { display: block; }
 body:not(.locked) #gate { display: none; }
 .keys label { display: block; margin: 10px 0; color: var(--muted); }
 .keys input {
