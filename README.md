@@ -26,23 +26,23 @@ Override the port with `PORT`.
 
 ## Sign-in and keys
 
-The desk is closed until Google sign-in succeeds. Any verified Google account can sign in. Set `GOOGLE_ALLOWED_EMAIL` only if you want to lock the desk to one address. `email_verified` is required. A session cookie is `HttpOnly` and `SameSite=Lax`, and it is `Secure` when the desk is behind HTTPS. The cookie holds a random id, not the email, not the Google account id, and not the exchange keys. Sessions live in memory, so a restart signs every screen out.
+The desk is closed until sign-in succeeds. **Continue with Google** uses Grok's account login at accounts.x.ai. Grok already handles Google. This app does not use a Google client id, a client secret, or Google Cloud, and it does not ask for Gmail, Drive, or Calendar. The only identity requested is the account itself (`openid`, `profile`, `email`).
 
-Each Google account has its own pair, timeframe, open backtest trade, and keys. Phone and laptop signed in as the same account each get their own cookie and the same desk. Chart zoom stays on the screen that set it. A different Google account does not see that desk. The market tape is one process, so every signed-in account paints the same candles. Live fires belong to the account that turned them on. Another account cannot start or stop those fires.
+A session cookie is `HttpOnly` and `SameSite=Lax`, and it is `Secure` when the desk is behind HTTPS. The cookie holds a random id, not the email and not the exchange keys. Sessions live in memory, so a restart signs every screen out. Sign out on the desk ends a normal login.
 
-Create a Google OAuth client of type **Web application**. Put the client id in `GOOGLE_CLIENT_ID`, or as the first line of `data/google-client-id` (that directory is gitignored). Add authorized JavaScript origins for every URL you open, for example `http://127.0.0.1:4173` and the phone's address such as `http://192.168.1.20:4173`. No client secret is stored. The server checks the ID token against Google's published keys. Without a client id whose origins match the page, the Sign in with Google button stays on the page and Google does not open.
+Each account has its own pair, timeframe, open backtest trade, and keys. Phone and laptop signed in as the same account each get their own cookie and the same desk. Chart zoom stays on the screen that set it. A different account does not see that desk. If the page is opened by a Grok viewer that is already signed in through the gate, the desk opens without another login button. The market tape is one process, so every signed-in account paints the same candles. Live fires belong to the account that turned them on. Another account cannot start or stop those fires.
 
-Exchange keys typed into the page are encrypted with AES-256-GCM and written to `data/users/<sha256 of the Google account id>.enc` (mode `0600`). That directory is gitignored. The encryption key is `KEY_SECRET` from the environment, not a file next to the ciphertext. The page never reads the saved values back. A missing or wrong `KEY_SECRET` leaves the file locked and refuses a save. Keys from the environment are not shared across accounts. Nothing in the order log or the API responses contains the key or the secret.
+Exchange keys typed into the page are encrypted with AES-256-GCM and written to `data/users/<sha256 of the account id>.enc` (mode `0600`). That directory is gitignored. The encryption key is `KEY_SECRET` from the environment, not a file next to the ciphertext. The page never reads the saved values back. A missing or wrong `KEY_SECRET` leaves the file locked and refuses a save. Keys from the environment are not shared across accounts. Nothing in the order log or the API responses contains the key or the secret.
 
 ```bash
-GOOGLE_CLIENT_ID=....apps.googleusercontent.com KEY_SECRET=$(openssl rand -base64 32) npm start
+KEY_SECRET=$(openssl rand -base64 32) npm start
 ```
 
 Keep `KEY_SECRET` somewhere you control outside this repo. Losing it means typing the exchange keys again. Do not put the desk on the public internet. A private LAN address or Tailscale is the intended reach.
 
 ## Phone
 
-Open the same address in the phone browser, then add it to the home screen. On iPhone that is Share, then Add to Home Screen. On Android it is the browser menu, then Install app or Add to Home screen. The icon opens full screen. Sign in with Google. The same account on the phone and the laptop stays on one desk. A different account is a separate desk.
+Open the same address in the phone browser, then add it to the home screen. On iPhone that is Share, then Add to Home Screen. On Android it is the browser menu, then Install app or Add to Home screen. The icon opens full screen. Tap Continue with Google. The same account on the phone and the laptop stays on one desk. A different account is a separate desk.
 
 The chart uses one finger to pan and two fingers to zoom. Drag past the last candle to look ahead. Zoom goes in to a handful of bars. A backtest row opens that trade with candles after the signal, including about four hours after the exit, and that chart pans and zooms the same way. Fit on the live chart returns to the latest bars. Fit trade recentres the entry. Chart, Pairs, Book, and Keys sit on a bar at the bottom of a narrow screen. The home-screen install uses `manifest.webmanifest`. The service worker does not cache `/api/` and does not store keys.
 

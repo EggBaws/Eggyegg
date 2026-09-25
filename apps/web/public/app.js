@@ -9,10 +9,7 @@ let selectedTrade = null;
 let viewRev = 0;
 let quiet = false;
 let pollTimer = 0;
-let googleMounted = false;
-let googleClientId = '';
-let googleReady = false;
-let signInRequested = false;
+let loginPoll = 0;
 
 function money(n) {
   if (n == null || Number.isNaN(n)) return '—';
@@ -312,22 +309,59 @@ function showDesk(email) {
   void load();
 }
 
-function openGooglePrompt() {
-  const note = document.querySelector('#gate-note');
-  if (!googleClientId) {
-    note.textContent = `Sign-in needs GOOGLE_CLIENT_ID on this server. Authorized JavaScript origin: ${location.origin}`;
-    return;
-  }
-  if (!googleReady || !window.google?.accounts?.id) {
-    signInRequested = true;
-    note.textContent = 'Opening Google…';
-    return;
-  }
-  google.accounts.id.prompt((notification) => {
-    if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-      note.textContent = 'Use the Google button under Sign in with Google if the prompt does not open.';
+function stopLoginPoll() {
+  if (!loginPoll) return;
+  clearInterval(loginPoll);
+  loginPoll = 0;
+}
+
+function startLoginPoll() {
+  stopLoginPoll();
+  const tick = async () => {
+    const res = await fetch('/api/auth/poll', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.email) {
+      stopLoginPoll();
+      showDesk(data.email);
+      return;
     }
+    if (data.pending) return;
+    if (res.status === 401 && data.error) {
+      stopLoginPoll();
+      document.querySelector('#gate-note').textContent = data.error;
+    }
+  };
+  void tick();
+  loginPoll = window.setInterval(() => {
+    void tick();
+  }, 5000);
+}
+
+async function continueWithGoogle() {
+  const note = document.querySelector('#gate-note');
+  const popup = window.open('about:blank', '_blank');
+  note.textContent = 'Opening Google…';
+  const res = await fetch('/api/auth/google', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
   });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.verificationUrl) {
+    if (popup && popup !== window) popup.close();
+    note.textContent = data.error || 'Sign-in did not start.';
+    return;
+  }
+  const link = document.querySelector('#gate-open');
+  if (popup && popup !== window) {
+    popup.location = data.verificationUrl;
+    link.hidden = true;
+  } else {
+    link.href = data.verificationUrl;
+    link.hidden = false;
+  }
+  note.textContent = 'Continue with Google in the window that opened. This desk opens when that account is signed in.';
+  startLoginPoll();
 }
 
 function showGate() {
@@ -335,60 +369,25 @@ function showGate() {
   document.querySelector('#desk').hidden = true;
   stopPoll();
   const note = document.querySelector('#gate-note');
-  if (googleMounted) return;
-  googleMounted = true;
-  void fetch('/api/auth/config')
-    .then((res) => res.json())
-    .then((cfg) => {
-      if (!cfg.clientId) {
-        note.textContent = `The button is ready. This server still needs GOOGLE_CLIENT_ID. Authorized JavaScript origin: ${location.origin}`;
+  note.textContent = '';
+  void fetch('/api/auth/me').then(async (res) => {
+    if (res.ok) {
+      const data = await res.json();
+      if (data.email) {
+        showDesk(data.email);
         return;
       }
-      googleClientId = cfg.clientId;
-      const script = document.createElement('script');
-      script.src = 'https://accounts.google.com/gsi/client';
-      script.async = true;
-      script.onload = () => {
-        google.accounts.id.initialize({
-          client_id: cfg.clientId,
-          callback: (response) => {
-            void signIn(response.credential);
-          },
-        });
-        google.accounts.id.renderButton(document.querySelector('#google-btn'), {
-          theme: 'outline',
-          size: 'large',
-          text: 'signin_with',
-          shape: 'rectangular',
-          width: 320,
-        });
-        googleReady = true;
-        note.textContent = '';
-        if (signInRequested) openGooglePrompt();
-      };
-      script.onerror = () => {
-        note.textContent = 'Google sign-in did not load. The button is still here. Try again.';
-      };
-      document.head.appendChild(script);
-    })
-    .catch(() => {
-      note.textContent = 'Sign-in is unavailable. The desk stays closed.';
-    });
-}
-
-async function signIn(credential) {
-  const note = document.querySelector('#gate-note');
-  const res = await fetch('/api/auth/google', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ credential }),
+    }
+    document.querySelector('#google-signin').hidden = false;
+    const pending = await fetch('/api/auth/pending');
+    if (!pending.ok) return;
+    const data = await pending.json();
+    if (!data.pending) return;
+    note.textContent = 'Finish Google sign-in. This desk opens when that account is signed in.';
+    startLoginPoll();
+  }).catch(() => {
+    note.textContent = 'Sign-in is unavailable. The desk stays closed.';
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    note.textContent = data.error || 'Sign-in failed.';
-    return;
-  }
-  showDesk(data.email);
 }
 
 async function loadKeys() {
@@ -495,10 +494,11 @@ document.querySelector('#live-toggle').addEventListener('click', async () => {
 });
 
 document.querySelector('#google-signin').addEventListener('click', () => {
-  openGooglePrompt();
+  void continueWithGoogle();
 });
 
 document.querySelector('#sign-out').addEventListener('click', async () => {
+  stopLoginPoll();
   await fetch('/api/auth/logout', { method: 'POST' });
   snapshot = null;
   showGate();

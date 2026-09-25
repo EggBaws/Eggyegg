@@ -31,6 +31,9 @@ h1 { font-size: 1.6rem; }
   border-radius: 12px;
   padding: 24px;
 }
+#google-signin[hidden] { display: none; }
+#gate-open { display: inline-block; margin-top: 12px; color: var(--amber, #e6c36a); }
+#gate-open[hidden] { display: none; }
 #google-signin {
   display: inline-flex;
   align-items: center;

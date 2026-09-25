@@ -11,6 +11,9 @@ export interface Jwk {
   alg?: string;
   n?: string;
   e?: string;
+  x?: string;
+  y?: string;
+  crv?: string;
   use?: string;
 }
 
@@ -54,15 +57,20 @@ export function accountKeyFile(dir: string, sub: string): string {
   return join(dir, `${id}.enc`);
 }
 
-export function publicAuthConfig(clientId: string | undefined): { clientId: string | null; configured: boolean } {
-  const value = (clientId ?? '').trim();
-  const ok = /^[0-9A-Za-z_-]+\.apps\.googleusercontent\.com$/.test(value);
-  return { clientId: ok ? value : null, configured: ok };
+export const GROK_CLIENT_ID = 'b1a00492-073a-47ea-816f-4c329264a828';
+const GROK_ISSUER = 'https://auth.x.ai';
+const GROK_SCOPE = 'openid profile email';
+const LOGIN_COOKIE = 'choke_login';
+
+export function publicAuthConfig(): { provider: 'grok'; configured: boolean } {
+  return { provider: 'grok', configured: true };
 }
 
 export function isPublicApi(method: string, pathname: string): boolean {
   if (method === 'GET' && pathname === '/api/auth/config') return true;
+  if (method === 'GET' && pathname === '/api/auth/pending') return true;
   if (method === 'POST' && pathname === '/api/auth/google') return true;
+  if (method === 'POST' && pathname === '/api/auth/poll') return true;
   if (method === 'POST' && pathname === '/api/auth/logout') return true;
   return false;
 }
@@ -207,17 +215,112 @@ export function applyDeskView(current: DeskView, patch: { pair?: unknown; timefr
   return next;
 }
 
-export async function verifyGoogleIdToken(
+export interface GrokLogin {
+  begin(secure: boolean): Promise<
+    | { ok: true; setCookie: string; verificationUrl: string; intervalSec: number }
+    | { ok: false; error: string }
+  >;
+  pending(cookieHeader: string | undefined): { pending: boolean; verificationUrl?: string };
+  finish(cookieHeader: string | undefined, secure: boolean): Promise<
+    | { ok: true; pending: true; intervalSec: number }
+    | { ok: true; pending: false; email: string; sub: string; setCookie: string; clearLogin: string }
+    | { ok: false; error: string; clearLogin?: string }
+  >;
+}
+
+export function createGrokLogin(opts?: {
+  now?: () => number;
+  clientId?: string;
+  allowedEmail?: string | null;
+  fetchImpl?: (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ status: number; body: unknown }>;
+  certs?: () => Promise<Jwk[]>;
+}): GrokLogin {
+  const now = opts?.now ?? (() => Date.now());
+  const clientId = opts?.clientId ?? GROK_CLIENT_ID;
+  const allowedEmail = opts?.allowedEmail ?? null;
+  const fetchImpl = opts?.fetchImpl ?? defaultFetch;
+  const certs = opts?.certs;
+  const rows = new Map<string, { deviceCode: string; verificationUrl: string; intervalSec: number; exp: number }>();
+
+  function readLoginId(cookieHeader: string | undefined): string | null {
+    return readCookie(cookieHeader, LOGIN_COOKIE);
+  }
+
+  return {
+    async begin(secure: boolean) {
+      const started = await fetchImpl('https://auth.x.ai/oauth2/device/code', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: clientId, scope: GROK_SCOPE }).toString(),
+      });
+      const payload = asRecord(started.body);
+      const deviceCode = typeof payload.device_code === 'string' ? payload.device_code : '';
+      const verificationUrl = typeof payload.verification_uri_complete === 'string'
+        ? payload.verification_uri_complete
+        : typeof payload.verification_uri === 'string'
+          ? payload.verification_uri
+          : '';
+      const intervalSec = typeof payload.interval === 'number' && payload.interval > 0 ? payload.interval : 5;
+      const expiresIn = typeof payload.expires_in === 'number' ? payload.expires_in : 0;
+      if (started.status !== 200 || !deviceCode || !verificationUrl.startsWith('https://accounts.x.ai/')) {
+        return { ok: false, error: 'Sign-in did not start.' };
+      }
+      const id = randomBytes(32).toString('hex');
+      rows.set(id, { deviceCode, verificationUrl, intervalSec, exp: now() + expiresIn * 1000 });
+      return {
+        ok: true,
+        setCookie: serializeNamedCookie(LOGIN_COOKIE, id, secure, expiresIn),
+        verificationUrl,
+        intervalSec,
+      };
+    },
+    pending(cookieHeader: string | undefined) {
+      const row = currentRow(rows, readLoginId(cookieHeader), now);
+      if (!row) return { pending: false };
+      return { pending: true, verificationUrl: row.verificationUrl };
+    },
+    async finish(cookieHeader: string | undefined, secure: boolean) {
+      const id = readLoginId(cookieHeader);
+      const row = currentRow(rows, id, now);
+      if (!id || !row) return { ok: false, error: 'Sign-in expired. Try again.', clearLogin: clearNamedCookie(LOGIN_COOKIE, secure) };
+      const token = await fetchImpl('https://auth.x.ai/oauth2/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+          client_id: clientId,
+          device_code: row.deviceCode,
+        }).toString(),
+      });
+      const payload = asRecord(token.body);
+      if (payload.error === 'authorization_pending' || payload.error === 'slow_down') {
+        if (payload.error === 'slow_down') row.intervalSec += 5;
+        return { ok: true, pending: true, intervalSec: row.intervalSec };
+      }
+      rows.delete(id);
+      const clearLogin = clearNamedCookie(LOGIN_COOKIE, secure);
+      if (token.status !== 200 || typeof payload.id_token !== 'string') {
+        return { ok: false, error: 'Sign-in failed.', clearLogin };
+      }
+      const verdict = await verifyXaiIdToken(payload.id_token, { clientId, allowedEmail, now, certs });
+      if (!verdict.ok) return { ok: false, error: 'Sign-in failed.', clearLogin };
+      return { ok: true, pending: false, email: verdict.email, sub: verdict.sub, setCookie: '', clearLogin };
+    },
+  };
+}
+
+export async function verifyXaiIdToken(
   token: string,
   opts: {
-    clientId: string;
+    clientId?: string;
     allowedEmail: string | null;
     now?: () => number;
     certs?: () => Promise<Jwk[]>;
   },
 ): Promise<{ ok: true; email: string; sub: string } | { ok: false; error: string }> {
   const now = opts.now ?? (() => Date.now());
-  if (typeof token !== 'string' || token.length < 20 || token.length > 4096) return { ok: false, error: 'malformed' };
+  const clientId = opts.clientId ?? GROK_CLIENT_ID;
+  if (typeof token !== 'string' || token.length < 20 || token.length > 8192) return { ok: false, error: 'malformed' };
   const parts = token.split('.');
   if (parts.length !== 3 || !parts[0] || !parts[1]) return { ok: false, error: 'malformed' };
   let header: { alg?: unknown; kid?: unknown };
@@ -236,32 +339,31 @@ export async function verifyGoogleIdToken(
   } catch {
     return { ok: false, error: 'malformed' };
   }
-  if (header.alg !== 'RS256' || typeof header.kid !== 'string' || !header.kid) return { ok: false, error: 'alg' };
+  if (header.alg !== 'ES256' || typeof header.kid !== 'string' || !header.kid) return { ok: false, error: 'alg' };
   if (!parts[2]) return { ok: false, error: 'signature' };
-  const certs = opts.certs ?? (() => fetchGoogleCerts(now));
+  const certs = opts.certs ?? (() => fetchXaiKeys(now));
   const keys = await certs();
-  const jwk = keys.find((key) => key.kid === header.kid && key.kty === 'RSA');
+  const jwk = keys.find((key) => key.kid === header.kid && key.kty === 'EC');
   if (!jwk) return { ok: false, error: 'signature' };
   const signed = Buffer.from(`${parts[0]}.${parts[1]}`);
-  let signature: Buffer;
   try {
-    signature = Buffer.from(parts[2], 'base64url');
+    const signature = Buffer.from(parts[2], 'base64url');
     const key = createPublicKey({ key: jwk as JsonWebKey, format: 'jwk' });
-    const valid = cryptoVerify('RSA-SHA256', signed, key, signature);
+    const valid = cryptoVerify('sha256', signed, { key, dsaEncoding: 'ieee-p1363' }, signature);
     if (!valid) return { ok: false, error: 'signature' };
   } catch {
     return { ok: false, error: 'signature' };
   }
   const nowSec = Math.floor(now() / 1000);
-  if (claims.iss !== 'https://accounts.google.com' && claims.iss !== 'accounts.google.com') return { ok: false, error: 'issuer' };
-  const audOk = claims.aud === opts.clientId || (Array.isArray(claims.aud) && claims.aud.includes(opts.clientId));
+  if (claims.iss !== GROK_ISSUER) return { ok: false, error: 'issuer' };
+  const audOk = claims.aud === clientId || (Array.isArray(claims.aud) && claims.aud.includes(clientId));
   if (!audOk) return { ok: false, error: 'audience' };
   if (typeof claims.exp !== 'number' || claims.exp + CLOCK_SKEW_SEC < nowSec) return { ok: false, error: 'expired' };
   if (typeof claims.iat !== 'number' || claims.iat > nowSec + CLOCK_SKEW_SEC) return { ok: false, error: 'expired' };
-  if (claims.email_verified !== true && claims.email_verified !== 'true') return { ok: false, error: 'unverified' };
+  if (claims.email_verified === false || claims.email_verified === 'false') return { ok: false, error: 'unverified' };
   if (typeof claims.email !== 'string') return { ok: false, error: 'email' };
   const email = claims.email.trim().toLowerCase();
-  if (!email) return { ok: false, error: 'email' };
+  if (!email || !email.includes('@')) return { ok: false, error: 'email' };
   if (opts.allowedEmail !== null && !emailsMatch(email, opts.allowedEmail.trim().toLowerCase())) {
     return { ok: false, error: 'email' };
   }
@@ -271,11 +373,24 @@ export async function verifyGoogleIdToken(
   return { ok: true, email, sub };
 }
 
+export async function accountFromGateToken(
+  token: string,
+  opts?: { allowedEmail?: string | null; now?: () => number; certs?: () => Promise<Jwk[]> },
+): Promise<AccountSession | null> {
+  const verdict = await verifyXaiIdToken(token, {
+    allowedEmail: opts?.allowedEmail ?? null,
+    now: opts?.now,
+    certs: opts?.certs,
+  });
+  if (!verdict.ok) return null;
+  return { email: verdict.email, sub: verdict.sub };
+}
+
 let certCache: { keys: Jwk[]; exp: number } | null = null;
 
-async function fetchGoogleCerts(now: () => number): Promise<Jwk[]> {
+async function fetchXaiKeys(now: () => number): Promise<Jwk[]> {
   if (certCache && certCache.exp > now()) return certCache.keys;
-  const res = await fetch('https://www.googleapis.com/oauth2/v3/certs');
+  const res = await fetch('https://auth.x.ai/.well-known/jwks.json');
   if (!res.ok) return certCache?.keys ?? [];
   const body = (await res.json()) as { keys?: Jwk[] };
   const keys = Array.isArray(body.keys) ? body.keys : [];
@@ -286,6 +401,44 @@ async function fetchGoogleCerts(now: () => number): Promise<Jwk[]> {
   return keys;
 }
 
+async function defaultFetch(url: string, init: { method: string; headers: Record<string, string>; body: string }): Promise<{ status: number; body: unknown }> {
+  const res = await fetch(url, init);
+  const body: unknown = await res.json().catch(() => ({}));
+  return { status: res.status, body };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function currentRow(
+  rows: Map<string, { deviceCode: string; verificationUrl: string; intervalSec: number; exp: number }>,
+  id: string | null,
+  now: () => number,
+): { deviceCode: string; verificationUrl: string; intervalSec: number; exp: number } | null {
+  if (!id) return null;
+  const row = rows.get(id);
+  if (!row || row.exp <= now()) {
+    if (row) rows.delete(id);
+    return null;
+  }
+  return row;
+}
+
+function readCookie(cookieHeader: string | undefined, name: string): string | null {
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() !== name) continue;
+    const value = part.slice(eq + 1).trim();
+    if (!/^[a-f0-9]{64}$/.test(value)) return null;
+    return value;
+  }
+  return null;
+}
+
 function emailsMatch(left: string, right: string): boolean {
   const a = Buffer.from(left);
   const b = Buffer.from(right);
@@ -294,7 +447,19 @@ function emailsMatch(left: string, right: string): boolean {
 }
 
 function serializeCookie(value: string, secure: boolean, maxAge: number): string {
-  const parts = [`${COOKIE}=${value}`, 'HttpOnly', 'SameSite=Lax', 'Path=/', `Max-Age=${maxAge}`];
+  return serializeNamedCookie(COOKIE, value, secure, maxAge);
+}
+
+export function clearLoginCookie(secure: boolean): string {
+  return clearNamedCookie(LOGIN_COOKIE, secure);
+}
+
+function serializeNamedCookie(name: string, value: string, secure: boolean, maxAge: number): string {
+  const parts = [`${name}=${value}`, 'HttpOnly', 'SameSite=Lax', 'Path=/', `Max-Age=${Math.max(0, Math.floor(maxAge))}`];
   if (secure) parts.push('Secure');
   return parts.join('; ');
+}
+
+function clearNamedCookie(name: string, secure: boolean): string {
+  return serializeNamedCookie(name, '', secure, 0);
 }

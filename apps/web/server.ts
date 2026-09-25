@@ -16,16 +16,18 @@ import {
   type TapeEvent,
 } from '../../packages/venues/src/index.ts';
 import {
+  accountFromGateToken,
   accountKeyFile,
   allowedAccountEmail,
+  clearLoginCookie,
   clearSessionCookie,
   cookieIsSecure,
   createDeskStore,
+  createGrokLogin,
   createRateLimit,
   createSessionStore,
   originAllowed,
   publicAuthConfig,
-  verifyGoogleIdToken,
 } from './auth.ts';
 import { keyStatus, readKeyFile, removeKeyFile, saveKeyFile, validKeyMaterial, type StoredKeys } from './secrets.ts';
 
@@ -91,6 +93,7 @@ const BODY_LIMIT = 8192;
 const userKeyDir = join(root, 'data/users');
 const sessions = createSessionStore();
 const desks = createDeskStore();
+const grokLogin = createGrokLogin({ allowedEmail: allowedAccountEmail(process.env.GOOGLE_ALLOWED_EMAIL) });
 const loginLimit = createRateLimit({ limit: 8, windowMs: 15 * 60 * 1000 });
 let liveOwner: string | null = null;
 const SECURITY: Record<string, string> = {
@@ -99,9 +102,9 @@ const SECURITY: Record<string, string> = {
   'x-frame-options': 'DENY',
   'content-security-policy': [
     "default-src 'self'",
-    "script-src 'self' https://accounts.google.com",
-    "frame-src https://accounts.google.com",
-    "connect-src 'self' https://accounts.google.com",
+    "script-src 'self'",
+    "frame-src 'none'",
+    "connect-src 'self'",
     "style-src 'self'",
     "img-src 'self' data:",
     "base-uri 'self'",
@@ -117,7 +120,7 @@ function enqueue(job: () => Promise<void>): void {
   chain = chain.then(job, job);
 }
 
-function sendJson(res: ServerResponse, body: unknown, status = 200, extra?: Record<string, string>): void {
+function sendJson(res: ServerResponse, body: unknown, status = 200, extra?: Record<string, string | string[]>): void {
   const raw = JSON.stringify(body);
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...SECURITY, ...extra });
   res.end(raw);
@@ -157,19 +160,6 @@ function headerValue(req: IncomingMessage, name: string): string {
 
 function requestSecure(req: IncomingMessage): boolean {
   return cookieIsSecure({ forwardedProto: headerValue(req, 'x-forwarded-proto') });
-}
-
-function configuredClientId(): string | undefined {
-  const fromEnv = (process.env.GOOGLE_CLIENT_ID ?? '').trim();
-  if (fromEnv) return fromEnv;
-  const path = join(root, 'data/google-client-id');
-  if (!existsSync(path)) return undefined;
-  try {
-    const line = readFileSync(path, 'utf8').split(/\r?\n/, 1)[0]?.trim() ?? '';
-    return line || undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function resolveTradingKeys(sub: string): { keys: StoredKeys | null; source: 'saved' | 'none'; error?: string } {
@@ -416,49 +406,76 @@ const server = createServer(async (req, res) => {
       sendJson(res, { error: 'Cross-site request blocked.' }, 403);
       return;
     }
+    const secure = requestSecure(req);
+    let session = sessions.read(req.headers.cookie);
+    let minted: string | undefined;
+    if (!session) {
+      const gateToken = headerValue(req, 'x-grok-id-token');
+      if (gateToken) {
+        const account = await accountFromGateToken(gateToken, {
+          allowedEmail: allowedAccountEmail(process.env.GOOGLE_ALLOWED_EMAIL),
+        });
+        if (account) {
+          minted = sessions.issue(account, secure).setCookie;
+          session = account;
+        }
+      }
+    }
+    const reply = (body: unknown, status = 200, extra?: Record<string, string | string[]>) => {
+      const prior = extra?.['set-cookie'];
+      const cookies = [minted, ...(Array.isArray(prior) ? prior : prior ? [prior] : [])].filter((item): item is string => Boolean(item));
+      const headers = { ...extra };
+      if (cookies.length) headers['set-cookie'] = cookies;
+      sendJson(res, body, status, headers);
+    };
     if (method === 'GET' && url.pathname === '/api/auth/config') {
-      sendJson(res, publicAuthConfig(configuredClientId()));
+      reply(publicAuthConfig());
+      return;
+    }
+    if (method === 'GET' && url.pathname === '/api/auth/pending') {
+      reply(grokLogin.pending(req.headers.cookie));
       return;
     }
     if (method === 'POST' && url.pathname === '/api/auth/google') {
       const ip = req.socket.remoteAddress ?? 'local';
       if (!loginLimit(ip)) {
-        sendJson(res, { error: 'Too many sign-in attempts. Wait and try again.' }, 429);
+        reply({ error: 'Too many sign-in attempts. Wait and try again.' }, 429);
         return;
       }
-      const client = publicAuthConfig(configuredClientId());
-      if (!client.configured || !client.clientId) {
-        sendJson(res, { error: 'Sign-in is not configured.' }, 503);
+      const started = await grokLogin.begin(secure);
+      if (!started.ok) {
+        reply({ error: started.error }, 503);
         return;
       }
-      const body = await readJson(req);
-      const credential = typeof body.credential === 'string' ? body.credential : '';
-      const verdict = await verifyGoogleIdToken(credential, {
-        clientId: client.clientId,
-        allowedEmail: allowedAccountEmail(process.env.GOOGLE_ALLOWED_EMAIL),
-      });
-      if (!verdict.ok) {
-        sendJson(res, { error: 'Sign-in failed.' }, 401);
+      reply({ verificationUrl: started.verificationUrl, intervalSec: started.intervalSec }, 200, { 'set-cookie': started.setCookie });
+      return;
+    }
+    if (method === 'POST' && url.pathname === '/api/auth/poll') {
+      const finished = await grokLogin.finish(req.headers.cookie, secure);
+      if (!finished.ok) {
+        reply({ error: finished.error }, 401, finished.clearLogin ? { 'set-cookie': finished.clearLogin } : undefined);
         return;
       }
-      const issued = sessions.issue({ email: verdict.email, sub: verdict.sub }, requestSecure(req));
-      sendJson(res, { email: verdict.email }, 200, { 'set-cookie': issued.setCookie });
+      if (finished.pending) {
+        reply({ pending: true, intervalSec: finished.intervalSec });
+        return;
+      }
+      const issued = sessions.issue({ email: finished.email, sub: finished.sub }, secure);
+      reply({ email: finished.email }, 200, { 'set-cookie': [issued.setCookie, finished.clearLogin] });
       return;
     }
     if (method === 'POST' && url.pathname === '/api/auth/logout') {
       sessions.revoke(req.headers.cookie);
-      sendJson(res, { ok: true }, 200, { 'set-cookie': clearSessionCookie(requestSecure(req)) });
+      reply({ ok: true }, 200, { 'set-cookie': [clearSessionCookie(secure), clearLoginCookie(secure)] });
       return;
     }
-    let session: { email: string; sub: string } | null = null;
     if (url.pathname.startsWith('/api/')) {
-      session = sessions.read(req.headers.cookie);
       if (!session) {
-        sendJson(res, { error: 'Sign in required.' }, 401);
+        reply({ error: 'Sign in required.' }, 401);
         return;
       }
       if (method === 'GET' && url.pathname === '/api/auth/me') {
-        sendJson(res, { email: session.email });
+        reply({ email: session.email });
         return;
       }
     }
@@ -669,7 +686,9 @@ const server = createServer(async (req, res) => {
       res.end('not found');
       return;
     }
-    res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', ...SECURITY });
+    const fileHeaders: Record<string, string | string[]> = { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', ...SECURITY };
+    if (minted) fileHeaders['set-cookie'] = minted;
+    res.writeHead(200, fileHeaders);
     res.end(readFileSync(file));
   } catch (err) {
     const limited = err instanceof Error && err.message === 'BODY_LIMIT';

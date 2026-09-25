@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, sign } from 'node:crypto';
+import { generateKeyPairSync, sign, type JsonWebKey } from 'node:crypto';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import {
+  GROK_CLIENT_ID,
+  accountFromGateToken,
   accountKeyFile,
   allowedAccountEmail,
   applyDeskView,
   clearSessionCookie,
   createDeskStore,
+  createGrokLogin,
   createRateLimit,
   createSessionStore,
   emptyDeskView,
@@ -17,29 +20,28 @@ import {
   isPublicApi,
   originAllowed,
   publicAuthConfig,
-  verifyGoogleIdToken,
+  verifyXaiIdToken,
   type Jwk,
 } from '../auth.ts';
 import { keyStatus, openKeys, readKeyFile, saveKeyFile, sealKeys } from '../secrets.ts';
 
-const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
-const jwk = publicKey.export({ format: 'jwk' }) as Jwk;
-jwk.kid = 'test-key';
-jwk.alg = 'RS256';
+const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+const jwk = publicKey.export({ format: 'jwk' }) as Jwk & JsonWebKey;
+jwk.kid = 'test-ec';
+jwk.alg = 'ES256';
 jwk.use = 'sig';
 
-const CLIENT = 'desk-client.apps.googleusercontent.com';
-const EMAIL = 'pigpunkcoin@gmail.com';
+const EMAIL = 'person@gmail.com';
 const SUB = 'acct-owner-1';
 const NOW = 1_800_000_000_000;
 
 function mint(claims: Record<string, unknown>, opts?: { alg?: string; tamper?: boolean; kid?: string }): string {
-  const header = { alg: opts?.alg ?? 'RS256', kid: opts?.kid ?? 'test-key', typ: 'JWT' };
+  const header = { alg: opts?.alg ?? 'ES256', kid: opts?.kid ?? 'test-ec', typ: 'JWT' };
   const h = Buffer.from(JSON.stringify(header)).toString('base64url');
   const body = Buffer.from(JSON.stringify(claims)).toString('base64url');
   const data = `${h}.${body}`;
   if (header.alg === 'none') return `${data}.`;
-  const sig = sign('RSA-SHA256', Buffer.from(data), privateKey).toString('base64url');
+  const sig = sign('sha256', Buffer.from(data), { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
   if (!opts?.tamper) return `${data}.${sig}`;
   const forged = Buffer.from(JSON.stringify({ ...claims, email: 'other@example.com' })).toString('base64url');
   return `${h}.${forged}.${sig}`;
@@ -47,8 +49,8 @@ function mint(claims: Record<string, unknown>, opts?: { alg?: string; tamper?: b
 
 function claims(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    iss: 'https://accounts.google.com',
-    aud: CLIENT,
+    iss: 'https://auth.x.ai',
+    aud: GROK_CLIENT_ID,
     exp: Math.floor(NOW / 1000) + 3600,
     iat: Math.floor(NOW / 1000),
     email: EMAIL,
@@ -58,49 +60,33 @@ function claims(over: Record<string, unknown> = {}): Record<string, unknown> {
   };
 }
 
-describe('Google sign-in', () => {
-  it('accepts a verified token for the allowed account', async () => {
-    const verdict = await verifyGoogleIdToken(mint(claims()), {
-      clientId: CLIENT,
-      allowedEmail: EMAIL,
-      now: () => NOW,
-      certs: async () => [jwk],
-    });
-    assert.deepEqual(verdict, { ok: true, email: EMAIL, sub: SUB });
-  });
+function jsonResponse(status: number, body: unknown): { status: number; body: unknown } {
+  return { status, body };
+}
 
-  it('accepts any verified Google account when the desk is not locked to one address', async () => {
+describe('Grok sign-in', () => {
+  const opts = { allowedEmail: null as string | null, now: () => NOW, certs: async () => [jwk] };
+
+  it('accepts a Grok identity token and any verified account', async () => {
+    const verdict = await verifyXaiIdToken(mint(claims()), opts);
+    assert.deepEqual(verdict, { ok: true, email: EMAIL, sub: SUB });
     assert.equal(allowedAccountEmail(undefined), null);
     assert.equal(allowedAccountEmail(''), null);
     assert.equal(allowedAccountEmail('*'), null);
-    assert.equal(allowedAccountEmail('any'), null);
-    assert.equal(allowedAccountEmail('Pig@gmail.com'), 'pig@gmail.com');
-    const verdict = await verifyGoogleIdToken(mint(claims({ email: 'someone@gmail.com', sub: 'acct-other-2' })), {
-      clientId: CLIENT,
-      allowedEmail: null,
-      now: () => NOW,
-      certs: async () => [jwk],
-    });
-    assert.deepEqual(verdict, { ok: true, email: 'someone@gmail.com', sub: 'acct-other-2' });
-    const missing = claims();
-    delete missing.sub;
-    const noSub = await verifyGoogleIdToken(mint(missing), {
-      clientId: CLIENT,
-      allowedEmail: null,
-      now: () => NOW,
-      certs: async () => [jwk],
-    });
-    assert.equal(noSub.ok, false);
-    if (!noSub.ok) assert.equal(noSub.error, 'sub');
+    const other = await verifyXaiIdToken(mint(claims({ email: 'someone@gmail.com', sub: 'acct-other-2' })), opts);
+    assert.deepEqual(other, { ok: true, email: 'someone@gmail.com', sub: 'acct-other-2' });
+    const gate = await accountFromGateToken(mint(claims()), opts);
+    assert.deepEqual(gate, { email: EMAIL, sub: SUB });
+    assert.equal(await accountFromGateToken(mint(claims(), { tamper: true }), opts), null);
   });
 
-  it('rejects another Google account, an expired token, alg none, and a tampered signature', async () => {
-    const opts = { clientId: CLIENT, allowedEmail: EMAIL, now: () => NOW, certs: async () => [jwk] };
-    const wrong = await verifyGoogleIdToken(mint(claims({ email: 'someone@gmail.com' })), opts);
-    const expired = await verifyGoogleIdToken(mint(claims({ exp: Math.floor(NOW / 1000) - 120 })), opts);
-    const none = await verifyGoogleIdToken(mint(claims(), { alg: 'none' }), opts);
-    const tampered = await verifyGoogleIdToken(mint(claims(), { tamper: true }), opts);
-    const unverified = await verifyGoogleIdToken(mint(claims({ email_verified: false })), opts);
+  it('rejects another account when locked, an expired token, alg none, and a tampered signature', async () => {
+    const locked = { ...opts, allowedEmail: EMAIL };
+    const wrong = await verifyXaiIdToken(mint(claims({ email: 'someone@gmail.com' })), locked);
+    const expired = await verifyXaiIdToken(mint(claims({ exp: Math.floor(NOW / 1000) - 120 })), opts);
+    const none = await verifyXaiIdToken(mint(claims(), { alg: 'none' }), opts);
+    const tampered = await verifyXaiIdToken(mint(claims(), { tamper: true }), opts);
+    const unverified = await verifyXaiIdToken(mint(claims({ email_verified: false })), opts);
     assert.equal(wrong.ok, false);
     assert.equal(expired.ok, false);
     assert.equal(none.ok, false);
@@ -111,11 +97,59 @@ describe('Google sign-in', () => {
     if (!tampered.ok) assert.equal(tampered.error, 'signature');
   });
 
-  it('does not publish the allowed email in the sign-in config', () => {
-    const cfg = publicAuthConfig(CLIENT);
-    assert.deepEqual(cfg, { clientId: CLIENT, configured: true });
+  it('starts Continue with Google through Grok and keeps the device secret on the server', async () => {
+    let polls = 0;
+    const login = createGrokLogin({
+      now: () => NOW,
+      allowedEmail: null,
+      certs: async () => [jwk],
+      fetchImpl: async (url) => {
+        if (url.endsWith('/device/code')) {
+          return jsonResponse(200, {
+            device_code: 'device-secret',
+            user_code: 'ABCD-EFGH',
+            verification_uri_complete: 'https://accounts.x.ai/oauth2/device?user_code=ABCD-EFGH',
+            expires_in: 60,
+            interval: 5,
+          });
+        }
+        polls += 1;
+        if (polls === 1) return jsonResponse(400, { error: 'authorization_pending' });
+        return jsonResponse(200, {
+          id_token: mint(claims()),
+          access_token: 'should-not-leak',
+          refresh_token: 'should-not-leak',
+        });
+      },
+    });
+    const started = await login.begin(false);
+    assert.equal(started.ok, true);
+    if (!started.ok) return;
+    assert.equal(started.verificationUrl.startsWith('https://accounts.x.ai/'), true);
+    assert.equal(JSON.stringify(started).includes('device-secret'), false);
+    assert.match(started.setCookie, /choke_login=/);
+    assert.equal(started.setCookie.includes(EMAIL), false);
+    const id = /choke_login=([a-f0-9]{64})/.exec(started.setCookie)?.[1];
+    const waiting = await login.finish(`choke_login=${id}`, false);
+    assert.deepEqual(waiting, { ok: true, pending: true, intervalSec: 5 });
+    const done = await login.finish(`choke_login=${id}`, false);
+    assert.equal(done.ok, true);
+    if (!done.ok || done.pending) return;
+    assert.equal(done.email, EMAIL);
+    assert.equal(done.sub, SUB);
+    assert.equal(JSON.stringify(done).includes('should-not-leak'), false);
+    assert.equal(JSON.stringify(done).includes('device-secret'), false);
+    assert.equal(login.pending(`choke_login=${id}`).pending, false);
+  });
+
+  it('does not publish an email or a Google client id in the sign-in config', () => {
+    const cfg = publicAuthConfig();
+    assert.deepEqual(cfg, { provider: 'grok', configured: true });
     assert.equal(JSON.stringify(cfg).includes(EMAIL), false);
-    assert.deepEqual(publicAuthConfig('not-a-client'), { clientId: null, configured: false });
+    assert.equal(JSON.stringify(cfg).includes('googleusercontent'), false);
+    assert.equal(isPublicApi('POST', '/api/auth/google'), true);
+    assert.equal(isPublicApi('POST', '/api/auth/poll'), true);
+    assert.equal(isPublicApi('GET', '/api/auth/pending'), true);
   });
 });
 
