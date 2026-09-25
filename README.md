@@ -53,21 +53,21 @@ Paying replay, 25 Mar 2026 → 24 Sep 2026. Target is 0.50% of entry. One trade 
 
 | | Wins | Losses | Misses | Win rate | Net |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Book | 116 | 151 | 6 | 43.4% | +£1,406.66 |
-| BTCUSDT | 27 | 35 | 1 | 43.5% | +£492.31 |
-| ETHUSDT | 50 | 64 | 2 | 43.9% | +£641.25 |
-| SOLUSDT | 39 | 52 | 3 | 42.9% | +£273.10 |
+| Book | 113 | 131 | 6 | 46.3% | +£1,549.67 |
+| BTCUSDT | 25 | 29 | 1 | 46.3% | +£485.24 |
+| ETHUSDT | 49 | 56 | 2 | 46.7% | +£695.02 |
+| SOLUSDT | 39 | 46 | 3 | 45.9% | +£369.41 |
 
-Wins by UK month: March 6 (from the 25th), April 24, May 14, June 25, July 22, August 16, September 9 (through the 24th).
+Wins by UK month: March 6 (from the 25th), April 23, May 14, June 25, July 21, August 15, September 9 (through the 24th).
 
-The 1.12% target on this same 5m tape paid 49 times (+£3,027.01). Opening the filters at 1.12% still topped out around 12 wins in a full month, and a 3-minute book at 1.12% lost money. 0.50% is the target that puts a full month near 15–25 wins. Refusing a retest older than 4 hours 40 minutes, and a neck under 0.15%, keeps that win count and lifts the net from +£1,086.42 to +£1,406.66.
+The 1.12% target on this same 5m tape paid 49 times (+£3,027.01). Opening the filters at 1.12% still topped out around 12 wins in a full month, and a 3-minute book at 1.12% lost money. 0.50% is the target that puts a full month near 15–25 wins. A neck under 0.15% and a retest older than 4 hours 40 minutes were already out. Stops thinner than 0.175% of entry were the remaining leak: raising that floor drops three wins and twenty losses, and lifts the book from 43.4% / +£1,406.66 to 46.3% / +£1,549.67.
 
 What the replay kept:
 
 - The limit is the first touch of the FVG. The smash still has to close through a neck at least 0.15% of the sweep. A smaller neck stays FORMING.
 - The retest has to print within 56 closed 5m bars of the smash. Older displacement stays FORMING so the pair can arm a later choke.
 - A 2-candle or 3-candle gap both count. No gap is still `NO_FVG`.
-- The stop is one tick past the sweep wick, and at least 0.15% of entry. A stop on the profit side of the entry is not filled.
+- The stop is one tick past the sweep wick, and at least 0.175% of entry. A stop on the profit side of the entry is not filled.
 - A pair may arm three different chokes in one UK day, after the earlier one has closed. A second tag of the same box is still `SECOND_ON_SAME_BOX`.
 - `FAKE_NECK`, `CHASE`, `NO_SWEEP`, `FAT_STOP` above 6% margin at 10x, `ALREADY_USED`, and `DAILY_KILL` are unchanged. A clock is still not a spit reason.
 

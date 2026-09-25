@@ -101,7 +101,7 @@ describe('selective gates', () => {
     assert.equal(order.sl, 2639.2);
   });
 
-  it('counts a 2-candle gap once it has height, and rejects a stop inside 0.15%', () => {
+  it('counts a 2-candle gap once it has height, and rejects a stop inside 0.175%', () => {
     const candles = ethLongCandles();
     const structure = detectStructure(candles, 0.01, ukMidnightMs(ethNowMs()), '5m');
     assert.equal(structure.fvg?.kind, '3candle');
@@ -110,8 +110,8 @@ describe('selective gates', () => {
       : null;
     assert.equal(fvgIsTradable(two, structure.sweep?.price ?? 0), true);
     assert.equal(fvgIsTradable(null, structure.sweep?.price ?? 0), false);
-    assert.equal(stopIsWideEnough(100, 99.86), false);
-    assert.equal(stopIsWideEnough(100, 99.85), true);
+    assert.equal(stopIsWideEnough(100, 99.83), false);
+    assert.equal(stopIsWideEnough(100, 99.82), true);
     assert.equal(stopIsWithinCap(100, 99), true);
   });
 
