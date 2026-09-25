@@ -23,7 +23,9 @@ function mountChart(canvas) {
     stick: true,
     cross: null,
     drag: null,
+    pinch: null,
   };
+  const pointers = new Map();
 
   function aggregate(candles, mult) {
     if (mult <= 1) return candles.map((c) => ({ ...c }));
@@ -296,12 +298,52 @@ function mountChart(canvas) {
     draw();
   }, { passive: false });
 
+  function pinchSpan() {
+    const pts = [...pointers.values()];
+    const dx = pts[0].x - pts[1].x;
+    const dy = pts[0].y - pts[1].y;
+    return Math.hypot(dx, dy);
+  }
+
+  function beginPinch() {
+    if (!view.agg.length || pointers.size < 2) return;
+    view.drag = null;
+    const pts = [...pointers.values()];
+    const rect = canvas.getBoundingClientRect();
+    const localX = (pts[0].x + pts[1].x) / 2 - rect.left;
+    const box = plotBox();
+    const slot = (box.right - box.left) / view.count;
+    view.pinch = {
+      dist: pinchSpan(),
+      count: view.count,
+      anchor: view.start + (localX - box.left) / slot,
+      localX,
+    };
+  }
+
   canvas.addEventListener('pointerdown', (event) => {
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     canvas.setPointerCapture(event.pointerId);
-    view.drag = { x: event.clientX, start: view.start };
+    if (pointers.size >= 2) beginPinch();
+    else view.drag = { x: event.clientX, start: view.start };
   });
   canvas.addEventListener('pointermove', (event) => {
-    if (view.drag) {
+    if (pointers.has(event.pointerId)) pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (view.pinch && pointers.size >= 2) {
+      const dist = pinchSpan();
+      if (view.pinch.dist > 8 && dist > 8) {
+        const box = plotBox();
+        view.count = view.pinch.count * (view.pinch.dist / dist);
+        const slot = (box.right - box.left) / view.count;
+        view.start = view.pinch.anchor - (view.pinch.localX - box.left) / slot;
+        view.stick = false;
+        clamp();
+      }
+      view.cross = null;
+      draw();
+      return;
+    }
+    if (view.drag && pointers.size === 1) {
       const box = plotBox();
       const slot = (box.right - box.left) / view.count;
       view.start = view.drag.start - (event.clientX - view.drag.x) / slot;
@@ -311,12 +353,20 @@ function mountChart(canvas) {
     view.cross = localPoint(event);
     draw();
   });
-  canvas.addEventListener('pointerup', () => {
+  function endPointer(event) {
+    pointers.delete(event.pointerId);
+    view.pinch = null;
     view.drag = null;
-  });
-  canvas.addEventListener('pointerleave', () => {
+    if (pointers.size === 1) {
+      const left = [...pointers.values()][0];
+      view.drag = { x: left.x, start: view.start };
+    }
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('pointerleave', (event) => {
+    if (pointers.has(event.pointerId)) endPointer(event);
     view.cross = null;
-    view.drag = null;
     draw();
   });
   canvas.addEventListener('dblclick', () => fit());

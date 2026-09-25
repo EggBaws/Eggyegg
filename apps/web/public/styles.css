@@ -45,6 +45,7 @@ body:not(.locked) #gate { display: none; }
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px 10px;
+  font-size: 16px;
 }
 .clock { margin: 0; font-variant-numeric: tabular-nums; }
 .muted, .window-note, .ping { color: var(--muted); }
@@ -127,9 +128,19 @@ tr.click[aria-pressed="true"] { background: #243024; }
 .seg button[aria-pressed="true"] { border-color: var(--amber); color: var(--amber); }
 pre {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.82rem;
   line-height: 1.45;
+}
+.mobile-nav { display: none; }
+.mobile-nav a {
+  flex: 1;
+  text-align: center;
+  color: var(--text);
+  text-decoration: none;
+  padding: 12px 4px;
+  min-height: 44px;
 }
 button {
   background: #243024;
@@ -143,7 +154,34 @@ button.danger { background: #3a1818; border-color: #6a3030; }
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
 @media (max-width: 800px) {
-  body { padding: 14px; }
+  body {
+    padding: 12px;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+    overflow-x: hidden;
+  }
+  body.locked { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  h1 { font-size: 1.35rem; }
   .tiles { grid-template-columns: 1fr; }
-  .top-meta { text-align: left; }
+  .stats { grid-template-columns: 1fr 1fr; }
+  .top, .top-meta, .detail-head { align-items: flex-start; text-align: left; }
+  .chart-frame { height: min(68vh, 520px); }
+  .seg { flex-wrap: wrap; }
+  button, .seg button { min-height: 44px; }
+  .keys input { width: 100%; }
+  #gate { margin: 6vh 0; }
+  .live-bar button { width: 100%; }
+  table { font-size: 0.82rem; }
+  .window-note { font-size: 0.92rem; }
+  .mobile-nav {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 5;
+    background: #161d15;
+    border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }

@@ -40,6 +40,12 @@ GOOGLE_CLIENT_ID=....apps.googleusercontent.com KEY_SECRET=$(openssl rand -base6
 
 Keep `KEY_SECRET` somewhere you control outside this repo. Losing it means typing the exchange keys again. Do not put the desk on the public internet. A private LAN address or Tailscale is the intended reach.
 
+## Phone
+
+Open the same address in the phone browser, then add it to the home screen. On iPhone that is Share, then Add to Home Screen. On Android it is the browser menu, then Install app or Add to Home screen. The icon opens full screen. Sign in with the same Google account. The phone and the laptop stay on one desk.
+
+The chart uses one finger to pan and two fingers to zoom. Fit recentres it. Chart, Pairs, Book, and Keys sit on a bar at the bottom of a narrow screen. The home-screen install uses `manifest.webmanifest`. The service worker does not cache `/api/` and does not store keys.
+
 ## LIVE_ARMED
 
 `live_armed` in `config/default.json` still defaults to **false**. The desk button is what turns a real send on and off for this process.

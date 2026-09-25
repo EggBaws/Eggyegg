@@ -2,8 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#10140f" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Choke" />
     <title>Choke Watcher</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body class="locked">
@@ -15,6 +23,12 @@
       <p id="gate-note" class="muted"></p>
     </section>
     <div id="desk" hidden>
+    <nav class="mobile-nav" aria-label="Sections">
+      <a href="#live-chart">Chart</a>
+      <a href="#tiles">Pairs</a>
+      <a href="#backtest-panel">Book</a>
+      <a href="#keys">Keys</a>
+    </nav>
     <header class="top">
       <div>
         <p class="eyebrow">Paper desk</p>
@@ -34,7 +48,7 @@
       <p id="live-note" class="muted">Live fires are off. Starting sends LIMIT orders with a stop and a target to your MEXC account. Market orders are never sent.</p>
     </div>
     <p class="window-note">Fire window off — detection runs all day. The badge is status. The button is the only live switch, and it stays off until you confirm. The chart is the order: entry, stop, and target are the LIMIT that goes to MEXC when live fires are on. This page stays in step with your other signed-in screens.</p>
-    <section class="review keys">
+    <section class="review keys" id="keys">
       <div class="detail-head">
         <h2>MEXC keys</h2>
         <p id="keys-status" class="muted">Keys are not loaded.</p>

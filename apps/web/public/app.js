@@ -507,6 +507,10 @@ document.querySelector('#keys-remove').addEventListener('click', async () => {
   await loadKeys();
 });
 
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+
 void fetch('/api/auth/me').then(async (res) => {
   if (!res.ok) {
     showGate();
