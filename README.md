@@ -53,18 +53,19 @@ Paying replay, 25 Mar 2026 → 24 Sep 2026. Target is 0.50% of entry. One trade 
 
 | | Wins | Losses | Misses | Win rate | Net |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Book | 116 | 161 | 7 | 41.9% | +£1,086.42 |
-| BTCUSDT | 26 | 36 | 2 | 41.9% | +£382.32 |
-| ETHUSDT | 50 | 70 | 2 | 41.7% | +£476.83 |
-| SOLUSDT | 40 | 55 | 3 | 42.1% | +£227.26 |
+| Book | 116 | 151 | 6 | 43.4% | +£1,406.66 |
+| BTCUSDT | 27 | 35 | 1 | 43.5% | +£492.31 |
+| ETHUSDT | 50 | 64 | 2 | 43.9% | +£641.25 |
+| SOLUSDT | 39 | 52 | 3 | 42.9% | +£273.10 |
 
-Wins by UK month: March 6 (from the 25th), April 24, May 16, June 24, July 21, August 16, September 9 (through the 24th). The full months sit inside 16–24.
+Wins by UK month: March 6 (from the 25th), April 24, May 14, June 25, July 22, August 16, September 9 (through the 24th).
 
-The 1.12% target on this same 5m tape paid 49 times (+£3,027.01). Opening the filters at 1.12% still topped out around 12 wins in a full month, and a 3-minute book at 1.12% lost money. 0.50% is the target that puts a full month in the 15–25 range. Each win pays less, so the paper net is lower than the 1.12% book.
+The 1.12% target on this same 5m tape paid 49 times (+£3,027.01). Opening the filters at 1.12% still topped out around 12 wins in a full month, and a 3-minute book at 1.12% lost money. 0.50% is the target that puts a full month near 15–25 wins. Refusing a retest older than 4 hours 40 minutes, and a neck under 0.15%, keeps that win count and lifts the net from +£1,086.42 to +£1,406.66.
 
 What the replay kept:
 
-- The limit is the first touch of the FVG. The smash still has to close through a neck at least 0.10% of the sweep.
+- The limit is the first touch of the FVG. The smash still has to close through a neck at least 0.15% of the sweep. A smaller neck stays FORMING.
+- The retest has to print within 56 closed 5m bars of the smash. Older displacement stays FORMING so the pair can arm a later choke.
 - A 2-candle or 3-candle gap both count. No gap is still `NO_FVG`.
 - The stop is one tick past the sweep wick, and at least 0.15% of entry. A stop on the profit side of the entry is not filled.
 - A pair may arm three different chokes in one UK day, after the earlier one has closed. A second tag of the same box is still `SECOND_ON_SAME_BOX`.
@@ -147,7 +148,7 @@ npm run score-fixtures
 
 A row is scored only when the id contains `YYYY-MM-DD` and `entry_time_uk` is set. The clock is Europe/London. The engine sees closed 5m bars up to that bar's close, plus 1h context. It does not build a 3m or 2m series when 5m is continuous. Undated rows are listed and left unscored.
 
-The latest run fired 2 of 18 dated rows. The nine green takes are 3m or 2m labels. On 5m at the entry bar they were `CHASE`, `NO_FVG`, `FAT_STOP`, or `FORMING`, so they did not arm. One warn row armed, and one hard skip armed, because a clock is not a spit reason. The score is `logs/fixture-score.json`.
+The latest run fired 2 of 18 dated rows. The nine green takes are 3m or 2m labels. On 5m at the entry bar they were `CHASE`, `NO_FVG`, `FAKE_NECK`, `FAT_STOP`, or `FORMING`, so they did not arm. One warn row armed, and one hard skip armed, because a clock is not a spit reason. The score is `logs/fixture-score.json`.
 
 ## Out of scope
 

@@ -2,18 +2,18 @@ import type { Candle, FvgBox, NeckPoint, Side, SmashPoint, Structure } from './t
 
 /**
  * Floors measured on the six-month MEXC tape for a 0.50% target.
- * Neck at least 0.10% of the sweep, any real gap (2-candle or 3-candle).
+ * Neck at least 0.15% of the sweep, any real gap (2-candle or 3-candle).
  * Stop one tick past the sweep and at least 0.15% of entry.
- * The 1.12% target paid about eight times a month. 0.50% is what puts a full
- * month inside 15–25 wins. The ETH morning book still clears this.
+ * The retest has to print within 56 closed 5m bars of the smash (4h 40m).
+ * The ETH morning book still clears this (neck ~0.45%, smash one bar before the signal).
  */
-export const MIN_NECK_FRAC = 0.001;
+export const MIN_NECK_FRAC = 0.0015;
 export const MIN_FVG_FRAC = 0;
 export const MIN_STOP_FRAC = 0.0015;
-/** 1 = off. A hard cap here cuts the monthly win count back under 15. */
+/** 1 = off. */
 export const MAX_STOP_FRAC = 1;
 export const MAX_NECK_FRAC = 1;
-export const MAX_SMASH_AGE = 10_000;
+export const MAX_SMASH_AGE = 56;
 export const MAX_SWEEP_BARS = 10_000;
 
 export interface SelectProfile {

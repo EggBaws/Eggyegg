@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-25T11:00:10.229Z",
+  "generatedAt": "2026-09-25T12:54:22.781Z",
   "note": "Labels in fixtures/fixtures.jsonl were not edited. Undated rows stay unscored. 3m and 2m takes are judged on 5m.",
   "fired": 2,
   "scored": 18,
@@ -12,9 +12,9 @@
       "tf": "3m",
       "entryUk": "13:36",
       "state": "SPIT",
-      "reason": "CHASE",
+      "reason": "NO_FVG",
       "fired": false,
-      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Green take did not arm on 5m (SPIT CHASE). Left unfired rather than relaxing the gates."
+      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Green take did not arm on 5m (SPIT NO_FVG). Left unfired rather than relaxing the gates."
     },
     {
       "id": "fx-2025-11-25-sol-short-main",
@@ -24,9 +24,9 @@
       "tf": "3m",
       "entryUk": "17:54",
       "state": "SPIT",
-      "reason": "CHASE",
+      "reason": "FAKE_NECK",
       "fired": false,
-      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Green take did not arm on 5m (SPIT CHASE). Left unfired rather than relaxing the gates."
+      "note": "Label is 3m. Scored on closed 5m only — the engine does not invent a 3m or 2m series when 5m is continuous. Green take did not arm on 5m (SPIT FAKE_NECK). Left unfired rather than relaxing the gates."
     },
     {
       "id": "fx-2025-11-25-fake-move-skip",
