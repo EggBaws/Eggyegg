@@ -9,6 +9,7 @@ const chartSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../
 
 function harness() {
   const texts: string[] = [];
+  const placed: Array<{ text: string; x: number }> = [];
   const bodies: string[] = [];
   const queue: Array<() => void> = [];
   const listeners: Record<string, Array<(event: Record<string, unknown>) => void>> = {};
@@ -42,8 +43,9 @@ function harness() {
         fillRect() {
           if (ctx.fillStyle === '#4ade80' || ctx.fillStyle === '#f87171') bodies.push(ctx.fillStyle);
         },
-        fillText(text: string) {
+        fillText(text: string, x = 0) {
           texts.push(String(text));
+          placed.push({ text: String(text), x });
         },
         beginPath() {},
         moveTo() {},
@@ -85,6 +87,7 @@ function harness() {
     chart,
     canvas,
     texts,
+    placed,
     bodies,
     flush() {
       const pending = queue.splice(0);
@@ -103,6 +106,7 @@ function harness() {
     },
     clear() {
       texts.length = 0;
+      placed.length = 0;
       bodies.length = 0;
     },
   };
@@ -235,6 +239,21 @@ describe('chart viewport', () => {
     const stayedMid = (Math.max(...stayed) + Math.min(...stayed)) / 2;
     assert.ok(Math.abs(stayedMid - parkedMid) < 30);
     assert.ok(stayedMid < 1000);
+  });
+
+  it('prints a date once along the bottom and leaves the clocks readable', () => {
+    const ui = harness();
+    ui.canvas.clientWidth = 390;
+    ui.canvas.clientHeight = 640;
+    ui.chart.setSeries(candles(80), [], 300_000);
+    const axis = ui.placed.filter((mark) => /\d{2}:\d{2}/.test(mark.text));
+    const dated = axis.filter((mark) => /[A-Za-z]/.test(mark.text));
+    assert.equal(dated.length, 1);
+    assert.ok(axis.length >= 2);
+    for (let i = 1; i < axis.length; i++) {
+      const prev = axis[i - 1];
+      assert.ok(axis[i].x >= prev.x + prev.text.length * 6);
+    }
   });
 
   it('paints once the canvas has a size', () => {

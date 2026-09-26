@@ -427,14 +427,24 @@ function mountChart(canvas) {
     const step = Math.max(1, Math.round(view.count / 6));
     const last = view.agg[view.agg.length - 1];
     const future = barStep();
+    let nextX = box.left;
+    let lastDay = '';
+    ctx.textBaseline = 'middle';
     for (let index = Math.floor(view.start / step) * step; index < view.start + view.count; index += step) {
       if (index < 0) continue;
       const x = xOf(index);
-      if (x < box.left - 8 || x > box.right - 8) continue;
+      if (x < box.left || x > box.right) continue;
       const time = index < view.agg.length ? view.agg[index].time : last.time + (index - (view.agg.length - 1)) * future;
+      const stamp = ukStamp(time);
+      const label = stamp.clockOnly(stamp.day === lastDay);
+      const width = ctx.measureText(label).width;
+      if (x < nextX || x + width > box.right + 2) continue;
       ctx.fillStyle = '#9aab90';
-      ctx.fillText(fmtTime(time), x, box.bottom + 16);
+      ctx.fillText(label, x, box.bottom + 16);
+      nextX = x + width + 10;
+      lastDay = stamp.day;
     }
+    ctx.textBaseline = 'alphabetic';
 
     if (view.cross) {
       const { x, y } = view.cross;
@@ -735,14 +745,32 @@ function fmtPrice(price) {
 }
 
 function fmtTime(ms) {
-  return new Date(ms).toLocaleString('en-GB', {
+  const stamp = ukStamp(ms);
+  return `${stamp.day} ${stamp.clock}`;
+}
+
+function ukStamp(ms) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Europe/London',
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  });
+  }).formatToParts(new Date(ms));
+  const get = (type) => {
+    const part = parts.find((item) => item.type === type);
+    return part ? part.value : '';
+  };
+  const day = `${get('day')} ${get('month')}`;
+  const clock = `${get('hour')}:${get('minute')}`;
+  return {
+    day,
+    clock,
+    clockOnly(sameDay) {
+      return sameDay ? clock : `${day} ${clock}`;
+    },
+  };
 }
 
 function hexAlpha(hex, alpha) {
