@@ -75,21 +75,75 @@ export function liveArmGate(input: {
   return { arm: true, message: 'Live LIMIT fires are on. Market orders are not used.' };
 }
 
+export interface UsdtEquity {
+  equity: number;
+  available: number;
+  /** MEXC unrealized PnL. Already inside equity. */
+  unrealized: number;
+}
+
 /** USDT equity from GET /api/v1/private/account/assets. Other currencies are ignored. */
-export function usdtEquityFromAssets(data: unknown): { equity: number; available: number } | null {
+export function usdtEquityFromAssets(data: unknown): UsdtEquity | null {
   if (!Array.isArray(data)) return null;
   for (const row of data) {
     if (!row || typeof row !== 'object') continue;
-    const asset = row as { currency?: string; equity?: number; availableBalance?: number; positionMargin?: number };
+    const asset = row as { currency?: string; equity?: number; availableBalance?: number; positionMargin?: number; unrealized?: number };
     if (asset.currency !== 'USDT') continue;
-    const available = typeof asset.availableBalance === 'number' ? asset.availableBalance : null;
-    if (available == null || available < 0) return null;
+    const available = numOrNull(asset.availableBalance);
+    const unrealized = numOrNull(asset.unrealized);
+    if (available == null || available < 0 || unrealized == null) return null;
+    const reported = numOrNull(asset.equity);
     const equity =
-      typeof asset.equity === 'number'
-        ? asset.equity
-        : available + (typeof asset.positionMargin === 'number' ? asset.positionMargin : 0);
-    if (!(equity > 0)) return null;
-    return { equity, available };
+      reported != null
+        ? reported
+        : available + (numOrNull(asset.positionMargin) ?? 0) + unrealized;
+    if (equity < 0) return null;
+    return { equity, available, unrealized };
+  }
+  return null;
+}
+
+export interface PositionPnl {
+  realised: number;
+  ids: string[];
+  count: number;
+  totalPage: number | null;
+  currentPage: number | null;
+}
+
+/**
+ * Sum MEXC `realised` on a position list. That field is the exchange's realized PnL
+ * for those positions (fees included). It does not include account `unrealized`.
+ * Accepts a bare array or a page `{ resultList, totalPage, currentPage }`.
+ */
+export function positionPnl(data: unknown): PositionPnl | null {
+  const page = data && typeof data === 'object' && !Array.isArray(data) ? (data as { resultList?: unknown; totalPage?: unknown; currentPage?: unknown }) : null;
+  const rows = Array.isArray(data) ? data : Array.isArray(page?.resultList) ? page.resultList : null;
+  if (!rows) return null;
+  let realised = 0;
+  const ids: string[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') return null;
+    const cell = row as { realised?: unknown; positionId?: unknown };
+    const n = numOrNull(cell.realised);
+    if (n == null) return null;
+    realised += n;
+    if (cell.positionId != null) ids.push(String(cell.positionId));
+  }
+  return {
+    realised,
+    ids,
+    count: rows.length,
+    totalPage: page && typeof page.totalPage === 'number' ? page.totalPage : null,
+    currentPage: page && typeof page.currentPage === 'number' ? page.currentPage : null,
+  };
+}
+
+function numOrNull(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
   }
   return null;
 }
@@ -104,7 +158,11 @@ export interface MexcLiveAdapter extends VenueAdapter {
   pingAccount(): Promise<boolean>;
   orderFilled(orderId: string): Promise<boolean>;
   moveProtection(req: { pair: string; orderId: string; sl: number; tp: number }): Promise<{ ok: boolean; error?: string }>;
-  accountEquity(): Promise<{ equity: number; available: number } | null>;
+  accountEquity(): Promise<UsdtEquity | null>;
+  /** Realised PnL already booked on positions that are still open. */
+  openPositionPnl(): Promise<PositionPnl | null>;
+  /** Realised PnL of closed positions. `complete` is false when the history was cut short. */
+  closedPositionPnl(): Promise<{ realised: number; complete: boolean } | null>;
 }
 
 /** Move the stop to the lock and keep the runner target on an existing limit. Latest price. */
@@ -184,6 +242,33 @@ export function createMexcLive(opts: {
       const res = await call('GET', '/api/v1/private/account/assets', '');
       if (!res.ok) return null;
       return usdtEquityFromAssets(res.data);
+    },
+    async openPositionPnl() {
+      if (!opts.apiKey || !opts.apiSecret) return null;
+      const res = await call('GET', '/api/v1/private/position/open_positions', '');
+      if (!res.ok) return null;
+      if (res.data == null) return { realised: 0, ids: [], count: 0, totalPage: null, currentPage: null };
+      return positionPnl(res.data);
+    },
+    async closedPositionPnl() {
+      if (!opts.apiKey || !opts.apiSecret) return null;
+      const pageSize = 100;
+      const maxPages = 20;
+      let realised = 0;
+      for (let page = 1; page <= maxPages; page += 1) {
+        const res = await call('GET', '/api/v1/private/position/list/history_positions', `page_num=${page}&page_size=${pageSize}`);
+        if (!res.ok) return null;
+        if (res.data == null) return { realised, complete: true };
+        const parsed = positionPnl(res.data);
+        if (!parsed) return null;
+        realised += parsed.realised;
+        if (parsed.totalPage != null) {
+          if (page >= parsed.totalPage) return { realised, complete: true };
+          continue;
+        }
+        if (parsed.count < pageSize) return { realised, complete: true };
+      }
+      return { realised, complete: false };
     },
     async placeLimitWithProtection(req: LimitRequest): Promise<PlaceResult> {
       const built = mexcSubmitJson(req, leverage);

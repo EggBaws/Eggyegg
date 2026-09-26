@@ -9,6 +9,7 @@ import {
   mexcChangeProtectionJson,
   mexcSubmitJson,
   parseMexcKlines,
+  positionPnl,
   signMexc,
   usdtEquityFromAssets,
 } from '../src/index.ts';
@@ -120,18 +121,67 @@ describe('mexc live adapter', () => {
 
   it('reads USDT equity and ignores other currencies', () => {
     assert.equal(usdtEquityFromAssets(null), null);
-    assert.equal(usdtEquityFromAssets([{ currency: 'BTC', equity: 1, availableBalance: 1 }]), null);
+    assert.equal(usdtEquityFromAssets([{ currency: 'BTC', equity: 1, availableBalance: 1, unrealized: 0 }]), null);
     assert.deepEqual(
       usdtEquityFromAssets([
-        { currency: 'BTC', equity: 1, availableBalance: 1 },
-        { currency: 'USDT', equity: 250.5, availableBalance: 180.25, positionMargin: 70.25 },
+        { currency: 'BTC', equity: 1, availableBalance: 1, unrealized: 0 },
+        { currency: 'USDT', equity: 250.5, availableBalance: 180.25, positionMargin: 70.25, unrealized: 1.25 },
       ]),
-      { equity: 250.5, available: 180.25 },
+      { equity: 250.5, available: 180.25, unrealized: 1.25 },
     );
-    assert.deepEqual(usdtEquityFromAssets([{ currency: 'USDT', availableBalance: 40, positionMargin: 10 }]), {
+    assert.deepEqual(usdtEquityFromAssets([{ currency: 'USDT', availableBalance: 40, positionMargin: 10, unrealized: 0 }]), {
       equity: 50,
       available: 40,
+      unrealized: 0,
     });
+    assert.equal(usdtEquityFromAssets([{ currency: 'USDT', equity: 10, availableBalance: 10 }]), null);
+    assert.deepEqual(
+      usdtEquityFromAssets([{ currency: 'USDT', equity: '100.5', availableBalance: '90', unrealized: '-1.25' }]),
+      { equity: 100.5, available: 90, unrealized: -1.25 },
+    );
+  });
+
+  it('sums realised position pnl and does not treat a missing figure as zero', () => {
+    assert.equal(positionPnl(null), null);
+    assert.deepEqual(positionPnl([]), { realised: 0, ids: [], count: 0, totalPage: null, currentPage: null });
+    assert.equal(positionPnl([{ positionId: 1 }]), null);
+    assert.deepEqual(
+      positionPnl({
+        totalPage: 2,
+        currentPage: 1,
+        resultList: [
+          { positionId: 9, realised: 1.5 },
+          { positionId: 8, realised: -0.25 },
+        ],
+      }),
+      { realised: 1.25, ids: ['9', '8'], count: 2, totalPage: 2, currentPage: 1 },
+    );
+  });
+
+  it('adds every closed-position page into one realised total', async () => {
+    const pages = [
+      { totalPage: 2, currentPage: 1, resultList: [{ positionId: 2, realised: 3 }] },
+      { totalPage: 2, currentPage: 2, resultList: [{ positionId: 1, realised: -1.5 }] },
+    ];
+    const venue = createMexcLive({
+      apiKey: 'key',
+      apiSecret: 'secret',
+      fetchImpl: async (url) => {
+        const page = Number(new URL(url).searchParams.get('page_num'));
+        return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, code: 0, data: pages[page - 1] }) };
+      },
+    });
+    assert.deepEqual(await venue.closedPositionPnl(), { realised: 1.5, complete: true });
+    const open = createMexcLive({
+      apiKey: 'key',
+      apiSecret: 'secret',
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ success: true, code: 0, data: [{ positionId: 4, realised: -0.02 }] }),
+      }),
+    });
+    assert.deepEqual(await open.openPositionPnl(), { realised: -0.02, ids: ['4'], count: 1, totalPage: null, currentPage: null });
   });
 
   it('parses columnar klines and drops the forming bar', () => {

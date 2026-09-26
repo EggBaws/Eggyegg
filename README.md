@@ -122,7 +122,7 @@ The ETH morning example still arms: entry 2650.20, stop 2639.20, lock 2685.45, t
 
 The resting target is `entry * (1 ± 0.0183)`. The stop starts one tick beyond the sweep wick. Once price trades the 1.33% lock, that stop moves to the lock, on the chart and on the MEXC order. A pullback to the lock closes the 1.33% win. A hold through 1.83% takes the further target. On the published book, quantity is the minimum of stake × leverage and the size whose stop loss is about stake × 6%.
 
-The desk sizes from the balance instead. It starts at 100 USDT. Once live fires are on it reads MEXC USDT equity and available margin. Each new order takes one of two slots, about half the equity, and leaves 2% of that slot unused. Two trades can be open. A third waits until one closes. The limit, the stop, the 1.33% lock, and the 1.83% runner stay the same. Only the coin quantity changes. The six-month book is still the fixed £1,000 stake.
+The desk sizes from the balance instead. It starts at 100 USDT. Once the saved keys can read the account, the desk shows MEXC's USDT equity, the unrealized profit on open positions, and the total of closed-position realised profit plus that open profit. Those figures refresh from MEXC about once a second. Each new order takes one of two slots, about half the equity, and leaves 2% of that slot unused. Two trades can be open. A third waits until one closes. The limit, the stop, the 1.33% lock, and the 1.83% runner stay the same. Only the coin quantity changes. The six-month book is still the fixed £1,000 stake.
 
 ## States
 

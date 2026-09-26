@@ -10,6 +10,7 @@ let selectedTrade = null;
 let viewRev = 0;
 let quiet = false;
 let pollTimer = 0;
+let accountTimer = 0;
 let loginPoll = 0;
 let loginPopup = null;
 let tabHold = null;
@@ -52,16 +53,88 @@ function ukTime(ms) {
 }
 
 function stopPoll() {
-  if (!pollTimer) return;
-  clearInterval(pollTimer);
-  pollTimer = 0;
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = 0;
+  }
+  if (accountTimer) {
+    clearInterval(accountTimer);
+    accountTimer = 0;
+  }
 }
 
 function startPoll() {
-  if (pollTimer) return;
-  pollTimer = setInterval(() => {
-    void refresh();
-  }, 2000);
+  if (!pollTimer) {
+    pollTimer = setInterval(() => {
+      void refresh();
+    }, 2000);
+  }
+  if (!accountTimer) {
+    void refreshAccount();
+    accountTimer = setInterval(() => {
+      void refreshAccount();
+    }, 1000);
+  }
+}
+
+function paintSigned(el, n) {
+  if (!el) return;
+  const v = Number(n);
+  if (!Number.isFinite(v)) {
+    el.textContent = '—';
+    el.className = '';
+    return;
+  }
+  el.textContent = `${v > 0 ? '+' : ''}${v.toFixed(2)} USDT`;
+  el.className = v > 0 ? 'win' : v < 0 ? 'loss' : '';
+}
+
+function renderMexc(mexc) {
+  const balance = document.querySelector('#balance');
+  const pnl = document.querySelector('#pnl');
+  if (!balance || !pnl) return;
+  if (!mexc?.connected || mexc.equity == null) {
+    pnl.hidden = true;
+    if (snapshot?.balanceUsdt != null && snapshot?.tradeStakeUsdt != null) {
+      const open = snapshot.openTrades ?? 0;
+      const slots = snapshot.balanceSlots ?? 2;
+      balance.textContent = `Balance ${Number(snapshot.balanceUsdt).toFixed(2)} USDT. Next trade about ${Number(snapshot.tradeStakeUsdt).toFixed(2)} USDT margin. ${open} of ${slots} open.`;
+    }
+    return;
+  }
+  pnl.hidden = false;
+  const equity = document.querySelector('#pnl-balance');
+  if (equity) {
+    equity.textContent = `${Number(mexc.equity).toFixed(2)} USDT`;
+    equity.className = '';
+  }
+  paintSigned(document.querySelector('#pnl-open'), mexc.openPnl);
+  const total = document.querySelector('#pnl-total');
+  if (mexc.totalPnl == null) {
+    if (total) {
+      total.textContent = '—';
+      total.className = '';
+    }
+  } else {
+    paintSigned(total, mexc.totalPnl);
+  }
+  const open = snapshot?.openTrades ?? 0;
+  const slots = snapshot?.balanceSlots ?? 2;
+  const delayed = mexc.asOf && Date.now() - mexc.asOf > 5000 ? ' Last read is delayed.' : '';
+  const stake = mexc.tradeStakeUsdt == null ? '' : `Next trade about ${Number(mexc.tradeStakeUsdt).toFixed(2)} USDT margin. `;
+  balance.textContent = `${stake}${open} of ${slots} open. Balance is the MEXC account. Open P/L is the live position. Total is closed trades plus that open P/L.${delayed}`;
+}
+
+async function refreshAccount() {
+  const res = await fetch('/api/account');
+  if (res.status === 401) {
+    showGate();
+    return;
+  }
+  if (!res.ok) return;
+  const data = await res.json();
+  if (snapshot) snapshot.mexc = data;
+  renderMexc(data);
 }
 
 async function refresh() {
@@ -105,14 +178,7 @@ function render() {
   toggle.textContent = snapshot.liveArmed ? 'Stop live fires' : 'Start live fires';
   toggle.className = snapshot.liveArmed ? 'armed' : '';
   if (snapshot.message) document.querySelector('#live-note').textContent = snapshot.message;
-  const balance = document.querySelector('#balance');
-  if (balance) {
-    if (snapshot.balanceUsdt != null && snapshot.tradeStakeUsdt != null) {
-      const open = snapshot.openTrades ?? 0;
-      const slots = snapshot.balanceSlots ?? 2;
-      balance.textContent = `Balance ${Number(snapshot.balanceUsdt).toFixed(2)} USDT. Next trade about ${Number(snapshot.tradeStakeUsdt).toFixed(2)} USDT margin. ${open} of ${slots} open.`;
-    }
-  }
+  renderMexc(snapshot.mexc);
   const holiday = document.querySelector('#holiday');
   if (snapshot.holiday?.active) {
     holiday.hidden = false;

@@ -127,6 +127,11 @@ body:not(.locked) #gate { display: none; }
 .sky { color: #38bdf8; }
 .gold { color: #eab308; }
 .live-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 8px 0 4px; }
+.mexc-book { margin: 4px 0 8px; }
+.mexc-book dl { display: flex; gap: 18px; margin: 0 0 4px; flex-wrap: wrap; }
+.mexc-book dl[hidden] { display: none; }
+.mexc-book dt { color: var(--muted); font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.mexc-book dd { margin: 2px 0 0; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
 .live-bar button.armed { background: #3a1212; border-color: #a33; }
 .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 12px; }
 .stat { background: #12180f; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }

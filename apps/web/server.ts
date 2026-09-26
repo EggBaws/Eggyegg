@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, extname, isAbsolute, join, normalize } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { ChokeEngine, demoBook, loadConfig, type Candle, type MarketUpdate, type PairId } from '../../packages/engine/src/index.ts';
+import { ChokeEngine, demoBook, loadConfig, slotStake, type Candle, type MarketUpdate, type PairId } from '../../packages/engine/src/index.ts';
 import { ConsoleFileNotifier } from '../../packages/notify/src/index.ts';
 import {
   createMexcLive,
@@ -209,6 +209,126 @@ function publicState(sub: string, message?: string) {
     liveVenue: engine.isLiveArmed() ? 'mexc' : null,
     message: message ?? tapeMessage,
     view: desks.get(sub),
+  };
+}
+
+interface MexcView {
+  connected: boolean;
+  equity: number | null;
+  available: number | null;
+  openPnl: number | null;
+  totalPnl: number | null;
+  tradeStakeUsdt: number | null;
+  asOf: number | null;
+}
+
+interface MexcCache {
+  assetAt: number;
+  asset: { equity: number; available: number; unrealized: number } | null;
+  openAt: number;
+  openRealised: number | null;
+  openIds: string;
+  historyAt: number;
+  closedRealised: number | null;
+  closedComplete: boolean;
+}
+
+const mexcBooks = new Map<string, MexcCache>();
+const emptyMexc: MexcView = {
+  connected: false,
+  equity: null,
+  available: null,
+  openPnl: null,
+  totalPnl: null,
+  tradeStakeUsdt: null,
+  asOf: null,
+};
+
+async function mexcAccount(sub: string): Promise<MexcView> {
+  if (!sub) return emptyMexc;
+  const resolved = resolveTradingKeys(sub);
+  if (resolved.error || !resolved.keys) return emptyMexc;
+  const now = Date.now();
+  let row = mexcBooks.get(sub);
+  if (!row) {
+    row = {
+      assetAt: 0,
+      asset: null,
+      openAt: 0,
+      openRealised: null,
+      openIds: '',
+      historyAt: 0,
+      closedRealised: null,
+      closedComplete: false,
+    };
+    mexcBooks.set(sub, row);
+  }
+  const venue =
+    liveVenue && engine.isLiveArmed() && liveOwner === sub
+      ? liveVenue
+      : createMexcLive({ apiKey: resolved.keys.apiKey, apiSecret: resolved.keys.apiSecret, leverage: config.leverage });
+  if (now - row.assetAt >= 900) {
+    try {
+      const asset = await venue.accountEquity();
+      if (asset) {
+        row.asset = asset;
+        row.assetAt = now;
+      }
+    } catch {
+      // Keep the last equity MEXC did return.
+    }
+  }
+  if (!row.asset) return emptyMexc;
+  if (now - row.openAt >= 900) {
+    try {
+      const open = await venue.openPositionPnl();
+      if (open) {
+        const ids = [...open.ids].sort().join(',');
+        if (ids !== row.openIds) row.historyAt = 0;
+        row.openIds = ids;
+        row.openRealised = open.realised;
+        row.openAt = now;
+      }
+    } catch {
+      // Keep the last open realised figure.
+    }
+  }
+  if (row.closedRealised == null || now - row.historyAt >= 3000) {
+    try {
+      const closed = await venue.closedPositionPnl();
+      if (closed) {
+        row.closedRealised = closed.realised;
+        row.closedComplete = closed.complete;
+        row.historyAt = now;
+      }
+    } catch {
+      // Keep the last closed sum.
+    }
+  }
+  const openPnl = row.asset.unrealized;
+  const total =
+    row.closedComplete && row.closedRealised != null && row.openRealised != null
+      ? row.closedRealised + row.openRealised + openPnl
+      : null;
+  return {
+    connected: true,
+    equity: row.asset.equity,
+    available: row.asset.available,
+    openPnl,
+    totalPnl: total,
+    tradeStakeUsdt: slotStake(row.asset.equity, row.asset.available, config.balance_slots, config.balance_reserve_frac),
+    asOf: row.assetAt,
+  };
+}
+
+function stateWithMexc(sub: string, book: MexcView, message?: string) {
+  const state = publicState(sub, message);
+  if (!book.connected || book.equity == null || book.available == null) return { ...state, mexc: book };
+  return {
+    ...state,
+    mexc: book,
+    balanceUsdt: book.equity,
+    tradeStakeUsdt: book.tradeStakeUsdt,
   };
 }
 
@@ -532,7 +652,11 @@ async function onRequest(req: IncomingMessage, res: ServerResponse): Promise<voi
     }
     const sub = session?.sub ?? '';
     if (req.method === 'GET' && url.pathname === '/api/state') {
-      sendJson(res, publicState(sub));
+      sendJson(res, stateWithMexc(sub, await mexcAccount(sub)));
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/account') {
+      sendJson(res, await mexcAccount(sub));
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/chart') {
