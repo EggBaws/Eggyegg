@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, extname, isAbsolute, join, normalize } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ChokeEngine, demoBook, loadConfig, type Candle, type MarketUpdate, type PairId } from '../../packages/engine/src/index.ts';
 import { ConsoleFileNotifier } from '../../packages/notify/src/index.ts';
 import {
@@ -31,10 +31,27 @@ import {
   publicAuthConfig,
 } from './auth.ts';
 import { keyStatus, readKeyFile, removeKeyFile, saveKeyFile, validKeyMaterial, type StoredKeys } from './secrets.ts';
+import configJson from '../../config/default.json' with { type: 'json' };
+import backtestJson from '../../logs/backtest.json' with { type: 'json' };
 
 const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, '../..');
-const publicDir = join(here, 'public');
+
+function runtimeRoot(): string {
+  const sourceRoot = join(here, '../..');
+  if (existsSync(join(sourceRoot, 'config/default.json'))) return sourceRoot;
+  const dir = '/tmp/choke-desk';
+  mkdirSync(join(dir, 'config'), { recursive: true });
+  mkdirSync(join(dir, 'logs'), { recursive: true });
+  mkdirSync(join(dir, 'data'), { recursive: true });
+  const cfg = join(dir, 'config/default.json');
+  if (!existsSync(cfg)) writeFileSync(cfg, JSON.stringify(configJson));
+  const backtest = join(dir, 'logs/backtest.json');
+  if (!existsSync(backtest)) writeFileSync(backtest, JSON.stringify(backtestJson));
+  return dir;
+}
+
+const root = runtimeRoot();
+const publicDir = existsSync(join(here, 'public')) ? join(here, 'public') : join(root, 'public');
 const config = loadConfig(join(root, 'config/default.json'));
 const SYMBOL: Record<PairId, string> = {
   BTCUSDT: 'BTC_USDT',
@@ -399,7 +416,7 @@ async function cancelWorking(): Promise<{ failed: string[]; cancelled: number }>
   return { failed, cancelled };
 }
 
-const server = createServer(async (req, res) => {
+async function onRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
   const method = req.method ?? 'GET';
   try {
@@ -727,10 +744,49 @@ const server = createServer(async (req, res) => {
       sendJson(res, { error: limited ? 'Request is too large.' : badJson ? 'Request was not valid.' : 'Request failed.' }, limited || badJson ? 400 : 500);
     }
   }
-});
+}
+
+export function handleDesk(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    res.once('finish', finish);
+    res.once('error', (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
+    void onRequest(req, res).then(finish, (err) => {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('Request failed.');
+      }
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    });
+  });
+}
+
+let tapeBooted = false;
+export function bootDesk(): void {
+  if (tapeBooted) return;
+  tapeBooted = true;
+  void startTape();
+}
 
 const port = Number(process.env.PORT ?? 4173);
-server.listen(port, '0.0.0.0', () => {
-  console.log(`Choke Watcher UI http://127.0.0.1:${port}  LIVE_ARMED=${String(engine.isLiveArmed())}`);
-  void startTape();
-});
+const isMain = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  createServer((req, res) => {
+    void onRequest(req, res);
+  }).listen(port, '0.0.0.0', () => {
+    console.log(`Choke Watcher UI http://127.0.0.1:${port}  LIVE_ARMED=${String(engine.isLiveArmed())}`);
+    bootDesk();
+  });
+}
