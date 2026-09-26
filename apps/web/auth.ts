@@ -239,7 +239,7 @@ export interface GrokLogin {
   pending(cookieHeader: string | undefined): { pending: boolean; verificationUrl?: string; intervalSec?: number };
   finish(cookieHeader: string | undefined, secure: boolean): Promise<
     | { ok: true; pending: true; intervalSec: number; setCookie?: string }
-    | { ok: true; pending: false; email: string; sub: string; clearLogin: string }
+    | { ok: true; pending: false; email: string; sub: string; session: string; clearLogin: string }
     | { ok: true; pending: false }
     | { ok: false; error: string; clearLogin?: string }
   >;
@@ -344,7 +344,7 @@ export function createGrokLogin(opts?: {
       }
       const verdict = await verifyXaiIdToken(payload.id_token, { clientId, allowedEmail, now, certs });
       if (!verdict.ok) return { ok: false, error: 'Sign-in failed.', clearLogin };
-      return { ok: true, pending: false, email: verdict.email, sub: verdict.sub, clearLogin };
+      return { ok: true, pending: false, email: verdict.email, sub: verdict.sub, session: payload.id_token, clearLogin };
     },
   };
 }
@@ -539,6 +539,12 @@ function serializeCookie(value: string, secure: boolean, maxAge: number): string
 
 export function clearLoginCookie(secure: boolean): string {
   return clearNamedCookie(LOGIN_COOKIE, secure);
+}
+
+/** The published host drops Set-Cookie, so the page sends the login ticket back itself. */
+export function loginCookieFromClient(ticket: unknown, cookieHeader: string | undefined): string | undefined {
+  if (typeof ticket === 'string' && /^[A-Za-z0-9_-]{20,3500}$/.test(ticket)) return `${LOGIN_COOKIE}=${ticket}`;
+  return cookieHeader;
 }
 
 function serializeNamedCookie(name: string, value: string, secure: boolean, maxAge: number): string {

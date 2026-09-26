@@ -18,6 +18,7 @@ import {
   emptyDeskView,
   guardApi,
   isPublicApi,
+  loginCookieFromClient,
   originAllowed,
   publicAuthConfig,
   verifyXaiIdToken,
@@ -147,6 +148,8 @@ describe('Grok sign-in', () => {
     if (!done.ok || done.pending) return;
     assert.equal(done.email, EMAIL);
     assert.equal(done.sub, SUB);
+    assert.equal(typeof done.session, 'string');
+    assert.equal(done.session.split('.').length, 3);
     assert.equal(JSON.stringify(done).includes('should-not-leak'), false);
     assert.equal(JSON.stringify(done).includes('device-secret'), false);
     assert.match(done.clearLogin, /Max-Age=0/);
@@ -237,6 +240,10 @@ describe('Grok sign-in', () => {
     assert.equal(isPublicApi('POST', '/api/auth/google'), true);
     assert.equal(isPublicApi('POST', '/api/auth/poll'), true);
     assert.equal(isPublicApi('GET', '/api/auth/pending'), true);
+    assert.equal(loginCookieFromClient('not a ticket', 'choke_login=abc'), 'choke_login=abc');
+    assert.equal(loginCookieFromClient('abc', undefined), undefined);
+    const ticket = 'a'.repeat(40);
+    assert.equal(loginCookieFromClient(ticket, undefined), `choke_login=${ticket}`);
   });
 });
 

@@ -10,6 +10,24 @@ let viewRev = 0;
 let quiet = false;
 let pollTimer = 0;
 let loginPoll = 0;
+let loginPopup = null;
+let tabHold = null;
+
+const nativeFetch = window.fetch.bind(window);
+window.fetch = (input, init = {}) => {
+  const url = typeof input === 'string' ? input : input?.url || '';
+  if (typeof url === 'string' && url.startsWith('/api/')) {
+    const headers = new Headers(init.headers || {});
+    try {
+      const session = sessionStorage.getItem('chokeSession');
+      if (session && !headers.has('x-choke-session')) headers.set('x-choke-session', session);
+    } catch {
+      /* private mode */
+    }
+    init = { ...init, headers, credentials: init.credentials || 'same-origin' };
+  }
+  return nativeFetch(input, init);
+};
 
 function money(n) {
   if (n == null || Number.isNaN(n)) return '—';
@@ -304,6 +322,7 @@ function applyPayload(data) {
 
 function showDesk(email) {
   clearLoginMark();
+  releaseTab();
   document.body.classList.remove('locked');
   document.querySelector('#desk').hidden = false;
   const account = document.querySelector('#account');
@@ -312,17 +331,21 @@ function showDesk(email) {
   void load();
 }
 
-function loginStarted() {
+function loginTicket() {
   try {
-    return sessionStorage.getItem('chokeLogin') === '1';
+    return sessionStorage.getItem('chokeLoginTicket') || '';
   } catch {
-    return false;
+    return '';
   }
 }
 
-function markLogin() {
+function loginStarted() {
+  return Boolean(loginTicket());
+}
+
+function markLogin(ticket) {
   try {
-    sessionStorage.setItem('chokeLogin', '1');
+    sessionStorage.setItem('chokeLoginTicket', ticket);
   } catch {
     /* private mode still polls while this page stays open */
   }
@@ -330,9 +353,66 @@ function markLogin() {
 
 function clearLoginMark() {
   try {
-    sessionStorage.removeItem('chokeLogin');
+    sessionStorage.removeItem('chokeLoginTicket');
   } catch {
     /* ignore */
+  }
+}
+
+function holdTabOpen() {
+  releaseTab();
+  const hold = {};
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    gain.gain.value = 0.00001;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    hold.ctx = ctx;
+    hold.osc = osc;
+  } catch {
+    /* a quiet tab can still poll on this machine */
+  }
+  try {
+    const pending = navigator.wakeLock?.request('screen');
+    if (pending) pending.then((lock) => {
+      hold.lock = lock;
+    }).catch(() => {});
+  } catch {
+    /* ignore */
+  }
+  tabHold = hold;
+}
+
+function releaseTab() {
+  const hold = tabHold;
+  tabHold = null;
+  try {
+    hold?.osc?.stop();
+  } catch {
+    /* already stopped */
+  }
+  try {
+    void hold?.ctx?.close();
+  } catch {
+    /* ignore */
+  }
+  try {
+    void hold?.lock?.release();
+  } catch {
+    /* ignore */
+  }
+}
+
+function closeLoginPopup() {
+  const popup = loginPopup;
+  loginPopup = null;
+  try {
+    if (popup && popup !== window && !popup.closed) popup.close();
+  } catch {
+    /* the sign-in window already went away */
   }
 }
 
@@ -343,10 +423,20 @@ function stopLoginPoll() {
 }
 
 async function pollOnce() {
-  const res = await fetch('/api/auth/poll', { method: 'POST', credentials: 'same-origin' });
+  const res = await fetch('/api/auth/poll', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ login: loginTicket() }),
+  });
   const data = await res.json().catch(() => ({}));
-  if (res.ok && data.email) {
+  if (res.ok && data.email && data.session) {
+    try {
+      sessionStorage.setItem('chokeSession', data.session);
+    } catch {
+      /* the desk request still carries the cookie when the host keeps it */
+    }
     stopLoginPoll();
+    closeLoginPopup();
     showDesk(data.email);
     return 'desk';
   }
@@ -354,6 +444,7 @@ async function pollOnce() {
   if (res.status === 401 && data.error) {
     stopLoginPoll();
     clearLoginMark();
+    releaseTab();
     document.querySelector('#gate-note').textContent = data.error;
     return 'error';
   }
@@ -366,7 +457,7 @@ function startLoginPoll(intervalSec, immediate) {
   const tick = async () => {
     const state = await pollOnce();
     if (state === 'pending') {
-      document.querySelector('#gate-note').textContent = 'Leave this page open. It opens the desk as soon as Google is authorised.';
+      document.querySelector('#gate-note').textContent = 'Stay on the Google page. This desk opens on its own when that account is authorised.';
     }
   };
   if (immediate !== false) void tick();
@@ -406,7 +497,7 @@ async function openIfSignedIn() {
     pending = loginStarted();
   }
   if (!pending && !loginStarted()) return;
-  note.textContent = 'Leave this page open. It opens the desk as soon as Google is authorised.';
+  note.textContent = 'Stay on the Google page. This desk opens on its own when that account is authorised.';
   const state = await pollOnce();
   if (state === 'desk' || state === 'error') return;
   startLoginPoll(intervalSec, false);
@@ -414,7 +505,9 @@ async function openIfSignedIn() {
 
 async function continueWithGoogle() {
   const note = document.querySelector('#gate-note');
+  holdTabOpen();
   const popup = window.open('about:blank', '_blank');
+  loginPopup = popup;
   note.textContent = 'Opening Google…';
   const res = await fetch('/api/auth/google', {
     method: 'POST',
@@ -423,12 +516,13 @@ async function continueWithGoogle() {
     body: '{}',
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data.verificationUrl) {
-    if (popup && popup !== window) popup.close();
+  if (!res.ok || !data.verificationUrl || !data.login) {
+    closeLoginPopup();
+    releaseTab();
     note.textContent = data.error || 'Sign-in did not start.';
     return;
   }
-  markLogin();
+  markLogin(data.login);
   const link = document.querySelector('#gate-open');
   if (popup && popup !== window) {
     popup.location = data.verificationUrl;
@@ -437,7 +531,7 @@ async function continueWithGoogle() {
     link.href = data.verificationUrl;
     link.hidden = false;
   }
-  note.textContent = 'Leave this page open. It opens the desk as soon as Google is authorised.';
+  note.textContent = 'Stay on the Google page. This desk opens on its own when that account is authorised.';
   startLoginPoll(data.intervalSec);
 }
 
@@ -573,7 +667,15 @@ document.querySelector('#google-signin').addEventListener('click', () => {
 
 document.querySelector('#sign-out').addEventListener('click', async () => {
   stopLoginPoll();
+  closeLoginPopup();
+  releaseTab();
   await fetch('/api/auth/logout', { method: 'POST' });
+  try {
+    sessionStorage.removeItem('chokeSession');
+    sessionStorage.removeItem('chokeLoginTicket');
+  } catch {
+    /* ignore */
+  }
   snapshot = null;
   showGate();
 });

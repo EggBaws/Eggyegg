@@ -26,6 +26,7 @@ import {
   createGrokLogin,
   createRateLimit,
   createSessionStore,
+  loginCookieFromClient,
   originAllowed,
   publicAuthConfig,
 } from './auth.ts';
@@ -414,6 +415,15 @@ const server = createServer(async (req, res) => {
     let session = sessions.read(req.headers.cookie);
     let minted: string | undefined;
     if (!session) {
+      const presented = headerValue(req, 'x-choke-session');
+      if (presented.split('.').length === 3) {
+        const account = await accountFromGateToken(presented, {
+          allowedEmail: allowedAccountEmail(process.env.GOOGLE_ALLOWED_EMAIL),
+        });
+        if (account) session = account;
+      }
+    }
+    if (!session) {
       const gateToken = headerValue(req, 'x-grok-id-token');
       if (gateToken) {
         const account = await accountFromGateToken(gateToken, {
@@ -451,11 +461,18 @@ const server = createServer(async (req, res) => {
         reply({ error: started.error }, 503);
         return;
       }
-      reply({ verificationUrl: started.verificationUrl, intervalSec: started.intervalSec }, 200, { 'set-cookie': started.setCookie });
+      const login = started.setCookie.split(';')[0]?.split('=').slice(1).join('=') ?? '';
+      reply({ verificationUrl: started.verificationUrl, intervalSec: started.intervalSec, login }, 200, { 'set-cookie': started.setCookie });
       return;
     }
     if (method === 'POST' && url.pathname === '/api/auth/poll') {
-      const finished = await grokLogin.finish(req.headers.cookie, secure);
+      let ticket: unknown;
+      try {
+        ticket = (await readJson(req)).login;
+      } catch {
+        ticket = undefined;
+      }
+      const finished = await grokLogin.finish(loginCookieFromClient(ticket, req.headers.cookie), secure);
       if (!finished.ok) {
         reply({ error: finished.error }, 401, finished.clearLogin ? { 'set-cookie': finished.clearLogin } : undefined);
         return;
@@ -468,12 +485,12 @@ const server = createServer(async (req, res) => {
         );
         return;
       }
-      if (!('email' in finished) || !finished.email || !finished.sub || !finished.clearLogin) {
+      if (!('email' in finished) || !finished.email || !finished.sub || !finished.session || !finished.clearLogin) {
         reply({ pending: false });
         return;
       }
       const issued = sessions.issue({ email: finished.email, sub: finished.sub }, secure);
-      reply({ email: finished.email }, 200, { 'set-cookie': [issued.setCookie, finished.clearLogin] });
+      reply({ email: finished.email, session: finished.session }, 200, { 'set-cookie': [issued.setCookie, finished.clearLogin] });
       return;
     }
     if (method === 'POST' && url.pathname === '/api/auth/logout') {
