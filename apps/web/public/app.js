@@ -4,6 +4,7 @@ const tradeChart = mountChart(document.querySelector('#bt-chart'));
 let snapshot = null;
 let livePair = 'BTCUSDT';
 let liveTf = 1;
+let liveChartTicket = 0;
 let backtest = null;
 let selectedTrade = null;
 let viewRev = 0;
@@ -205,14 +206,20 @@ function selectLive(pair) {
 }
 
 async function loadLiveChart() {
-  const res = await fetch(`/api/chart?pair=${livePair}`);
+  const pair = livePair;
+  const ticket = ++liveChartTicket;
+  const res = await fetch(`/api/chart?pair=${encodeURIComponent(pair)}`);
+  if (ticket !== liveChartTicket || pair !== livePair) return;
   if (res.status === 401) {
     showGate();
     return;
   }
   if (!res.ok) return;
   const data = await res.json();
-  liveChart.setSeries(data.candles, data.marks, data.barMs);
+  if (ticket !== liveChartTicket || pair !== livePair || (data.pair && data.pair !== pair)) return;
+  const candles = Array.isArray(data.candles) ? data.candles : [];
+  if (!candles.length) return;
+  liveChart.setSeries(candles, Array.isArray(data.marks) ? data.marks : [], data.barMs);
   document.querySelector('#live-title').textContent = `${data.pair} · ${liveChart.label()} · ${data.state}`;
   const order = document.querySelector('#live-order');
   if (data.entry != null) {
@@ -239,7 +246,9 @@ function showTrade(id, scroll) {
   panel.hidden = false;
   renderBacktest();
   document.querySelector('#bt-title').textContent = `${trade.pair} ${trade.side} ${trade.outcome} · ${ukTime(trade.entryTime)} · entry ${money(trade.entry)} · ${gbp(trade.pnlGbp)}`;
-  tradeChart.setSeries(trade.candles, trade.marks, 300_000);
+  const candles = Array.isArray(trade.candles) ? trade.candles : [];
+  if (!candles.length) return;
+  tradeChart.setSeries(candles, Array.isArray(trade.marks) ? trade.marks : [], 300_000);
   tradeChart.setTimeframe(liveTf);
   tradeChart.frameSetup();
   if (scroll) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });

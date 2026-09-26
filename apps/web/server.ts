@@ -747,6 +747,7 @@ async function onRequest(req: IncomingMessage, res: ServerResponse): Promise<voi
 }
 
 export function handleDesk(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  bootDesk();
   return new Promise((resolve, reject) => {
     let settled = false;
     const finish = () => {

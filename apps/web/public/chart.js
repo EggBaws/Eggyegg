@@ -130,8 +130,12 @@ function mountChart(canvas) {
   function clamp() {
     const n = view.agg.length;
     if (!n) return;
+    if (!Number.isFinite(view.count) || view.count <= 0) view.count = Math.min(80, n);
     view.count = Math.max(4, Math.min(n, view.count));
-    const ahead = Math.min(96, Math.max(12, view.count * 0.75));
+    const keep = Math.min(n, Math.max(1, Math.min(8, Math.floor(view.count * 0.25) || 1)));
+    const aheadBudget = Math.min(96, Math.max(12, view.count * 0.75));
+    const ahead = Math.min(aheadBudget, Math.max(0, view.count - keep));
+    if (!Number.isFinite(view.start)) view.start = 0;
     if (view.start < 0) view.start = 0;
     const maxStart = Math.max(0, n + ahead - view.count);
     if (view.start > maxStart) view.start = maxStart;
@@ -151,8 +155,26 @@ function mountChart(canvas) {
     return view.agg.slice(from, to);
   }
 
-  function draw() {
+  function waitForBox(attempt) {
+    view.layoutWait = true;
+    requestAnimationFrame(() => {
+      if (canvas.clientWidth >= 2 && canvas.clientHeight >= 2) {
+        view.layoutWait = false;
+        draw();
+        return;
+      }
+      if (attempt < 8) waitForBox(attempt + 1);
+      else view.layoutWait = false;
+    });
+  }
+
+  function draw(recovering) {
     const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    if ((canvas.clientWidth < 2 || canvas.clientHeight < 2) && view.agg.length) {
+      if (!view.layoutWait) waitForBox(0);
+      return;
+    }
     const dpr = window.devicePixelRatio || 1;
     const box = plotBox();
     canvas.width = Math.floor(box.width * dpr);
@@ -161,7 +183,14 @@ function mountChart(canvas) {
     ctx.clearRect(0, 0, box.width, box.height);
     ctx.fillStyle = '#0c100c';
     ctx.fillRect(0, 0, box.width, box.height);
-    const rows = slice();
+    let rows = slice();
+    if (!rows.length && view.agg.length && !recovering) {
+      clamp();
+      rows = slice();
+      if (!rows.length) pinLive();
+      draw(true);
+      return;
+    }
     if (!rows.length) {
       ctx.fillStyle = '#9aab90';
       ctx.font = '13px ui-monospace, monospace';
