@@ -317,10 +317,11 @@ function stopLoginPoll() {
   loginPoll = 0;
 }
 
-function startLoginPoll() {
+function startLoginPoll(intervalSec) {
   stopLoginPoll();
+  const wait = Math.max(2, Number(intervalSec) || 5) * 1000;
   const tick = async () => {
-    const res = await fetch('/api/auth/poll', { method: 'POST' });
+    const res = await fetch('/api/auth/poll', { method: 'POST', credentials: 'same-origin' });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.email) {
       stopLoginPoll();
@@ -336,7 +337,32 @@ function startLoginPoll() {
   void tick();
   loginPoll = window.setInterval(() => {
     void tick();
-  }, 5000);
+  }, wait);
+}
+
+async function openIfSignedIn() {
+  const note = document.querySelector('#gate-note');
+  try {
+    const me = await fetch('/api/auth/me', { credentials: 'same-origin' });
+    if (me.ok) {
+      const data = await me.json();
+      if (data.email) {
+        showDesk(data.email);
+        return;
+      }
+    }
+  } catch {
+    document.querySelector('#google-signin').hidden = false;
+    note.textContent = 'Sign-in is unavailable. The desk stays closed.';
+    return;
+  }
+  document.querySelector('#google-signin').hidden = false;
+  const pending = await fetch('/api/auth/pending', { credentials: 'same-origin' });
+  if (!pending.ok) return;
+  const data = await pending.json().catch(() => ({}));
+  if (!data.pending) return;
+  note.textContent = 'Leave this page open. It opens the desk as soon as Google is authorised.';
+  startLoginPoll(data.intervalSec);
 }
 
 async function continueWithGoogle() {
@@ -345,6 +371,7 @@ async function continueWithGoogle() {
   note.textContent = 'Opening Google…';
   const res = await fetch('/api/auth/google', {
     method: 'POST',
+    credentials: 'same-origin',
     headers: { 'content-type': 'application/json' },
     body: '{}',
   });
@@ -362,35 +389,26 @@ async function continueWithGoogle() {
     link.href = data.verificationUrl;
     link.hidden = false;
   }
-  note.textContent = 'Continue with Google in the window that opened. This desk opens when that account is signed in.';
-  startLoginPoll();
+  note.textContent = 'Leave this page open. It opens the desk as soon as Google is authorised.';
+  startLoginPoll(data.intervalSec);
 }
 
 function showGate() {
   document.body.classList.add('locked');
   document.querySelector('#desk').hidden = true;
   stopPoll();
-  const note = document.querySelector('#gate-note');
-  note.textContent = '';
-  void fetch('/api/auth/me').then(async (res) => {
-    if (res.ok) {
-      const data = await res.json();
-      if (data.email) {
-        showDesk(data.email);
-        return;
-      }
-    }
-    document.querySelector('#google-signin').hidden = false;
-    const pending = await fetch('/api/auth/pending');
-    if (!pending.ok) return;
-    const data = await pending.json();
-    if (!data.pending) return;
-    note.textContent = 'Finish Google sign-in. This desk opens when that account is signed in.';
-    startLoginPoll();
-  }).catch(() => {
-    note.textContent = 'Sign-in is unavailable. The desk stays closed.';
-  });
+  void openIfSignedIn();
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (!document.body.classList.contains('locked')) return;
+  void openIfSignedIn();
+});
+window.addEventListener('pageshow', () => {
+  if (!document.body.classList.contains('locked')) return;
+  void openIfSignedIn();
+});
 
 async function loadKeys() {
   const res = await fetch('/api/keys');
@@ -542,11 +560,4 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
-void fetch('/api/auth/me').then(async (res) => {
-  if (!res.ok) {
-    showGate();
-    return;
-  }
-  const data = await res.json();
-  showDesk(data.email);
-});
+showGate();

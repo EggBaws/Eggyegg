@@ -1,5 +1,6 @@
 import { createHash, createPublicKey, randomBytes, timingSafeEqual, verify as cryptoVerify, type JsonWebKey } from 'node:crypto';
-import { join } from 'node:path';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 const COOKIE = 'choke_session';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -89,11 +90,12 @@ export function guardApi(input: {
 }
 
 export function originAllowed(input: { origin?: string; host?: string; secFetchSite?: string }): boolean {
+  const site = (input.secFetchSite ?? '').trim();
+  if (site === 'cross-site') return false;
+  // The browser sets this. A page on the published host is same-origin even when the proxy rewrites Host.
+  if (site === 'same-origin') return true;
   const origin = (input.origin ?? '').trim();
-  if (!origin) {
-    const site = (input.secFetchSite ?? '').trim();
-    return site === '' || site === 'same-origin' || site === 'none';
-  }
+  if (!origin) return site === '' || site === 'none';
   let parsed: URL;
   try {
     parsed = new URL(origin);
@@ -228,22 +230,37 @@ export interface GrokLogin {
   >;
 }
 
+interface LoginRow {
+  deviceCode: string;
+  verificationUrl: string;
+  intervalSec: number;
+  exp: number;
+}
+
 export function createGrokLogin(opts?: {
   now?: () => number;
   clientId?: string;
   allowedEmail?: string | null;
   fetchImpl?: (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ status: number; body: unknown }>;
   certs?: () => Promise<Jwk[]>;
+  /** Survives a process restart so a finished Google login can still open the desk. */
+  storePath?: string;
 }): GrokLogin {
   const now = opts?.now ?? (() => Date.now());
   const clientId = opts?.clientId ?? GROK_CLIENT_ID;
   const allowedEmail = opts?.allowedEmail ?? null;
   const fetchImpl = opts?.fetchImpl ?? defaultFetch;
   const certs = opts?.certs;
-  const rows = new Map<string, { deviceCode: string; verificationUrl: string; intervalSec: number; exp: number }>();
+  const storePath = opts?.storePath;
+  const rows = storePath ? readLoginFile(storePath, now()) : new Map<string, LoginRow>();
 
   function readLoginId(cookieHeader: string | undefined): string | null {
     return readCookie(cookieHeader, LOGIN_COOKIE);
+  }
+
+  function persist(): void {
+    if (!storePath) return;
+    writeLoginFile(storePath, rows);
   }
 
   return {
@@ -261,12 +278,13 @@ export function createGrokLogin(opts?: {
           ? payload.verification_uri
           : '';
       const intervalSec = typeof payload.interval === 'number' && payload.interval > 0 ? payload.interval : 5;
-      const expiresIn = typeof payload.expires_in === 'number' ? payload.expires_in : 0;
+      const expiresIn = loginLifetimeSec(payload.expires_in);
       if (started.status !== 200 || !deviceCode || !verificationUrl.startsWith('https://accounts.x.ai/')) {
         return { ok: false, error: 'Sign-in did not start.' };
       }
       const id = randomBytes(32).toString('hex');
       rows.set(id, { deviceCode, verificationUrl, intervalSec, exp: now() + expiresIn * 1000 });
+      persist();
       return {
         ok: true,
         setCookie: serializeNamedCookie(LOGIN_COOKIE, id, secure, expiresIn),
@@ -282,22 +300,38 @@ export function createGrokLogin(opts?: {
     async finish(cookieHeader: string | undefined, secure: boolean) {
       const id = readLoginId(cookieHeader);
       const row = currentRow(rows, id, now);
-      if (!id || !row) return { ok: false, error: 'Sign-in expired. Try again.', clearLogin: clearNamedCookie(LOGIN_COOKIE, secure) };
-      const token = await fetchImpl('https://auth.x.ai/oauth2/token', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-          client_id: clientId,
-          device_code: row.deviceCode,
-        }).toString(),
-      });
+      if (!id || !row) {
+        if (id) persist();
+        return { ok: false, error: 'Sign-in expired. Try again.', clearLogin: clearNamedCookie(LOGIN_COOKIE, secure) };
+      }
+      let token: { status: number; body: unknown };
+      try {
+        token = await fetchImpl('https://auth.x.ai/oauth2/token', {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+            client_id: clientId,
+            device_code: row.deviceCode,
+          }).toString(),
+        });
+      } catch {
+        return { ok: true, pending: true, intervalSec: row.intervalSec };
+      }
       const payload = asRecord(token.body);
-      if (payload.error === 'authorization_pending' || payload.error === 'slow_down') {
-        if (payload.error === 'slow_down') row.intervalSec += 5;
+      const err = typeof payload.error === 'string' ? payload.error : '';
+      if (token.status >= 500 || err === 'temporarily_unavailable') {
+        return { ok: true, pending: true, intervalSec: row.intervalSec };
+      }
+      if (err === 'authorization_pending' || err === 'slow_down') {
+        if (err === 'slow_down') {
+          row.intervalSec += 5;
+          persist();
+        }
         return { ok: true, pending: true, intervalSec: row.intervalSec };
       }
       rows.delete(id);
+      persist();
       const clearLogin = clearNamedCookie(LOGIN_COOKIE, secure);
       if (token.status !== 200 || typeof payload.id_token !== 'string') {
         return { ok: false, error: 'Sign-in failed.', clearLogin };
@@ -412,11 +446,46 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function loginLifetimeSec(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : 0;
+  if (!Number.isFinite(parsed) || parsed <= 0) return 900;
+  return Math.min(Math.floor(parsed), 3600);
+}
+
+function readLoginFile(path: string, nowMs: number): Map<string, LoginRow> {
+  const rows = new Map<string, LoginRow>();
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return rows;
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return rows;
+  for (const [id, value] of Object.entries(raw)) {
+    if (!/^[a-f0-9]{64}$/.test(id) || !value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Partial<LoginRow>;
+    if (typeof row.deviceCode !== 'string' || !row.deviceCode) continue;
+    if (typeof row.verificationUrl !== 'string' || !row.verificationUrl.startsWith('https://accounts.x.ai/')) continue;
+    if (typeof row.exp !== 'number' || row.exp <= nowMs) continue;
+    const intervalSec = typeof row.intervalSec === 'number' && row.intervalSec > 0 ? row.intervalSec : 5;
+    rows.set(id, { deviceCode: row.deviceCode, verificationUrl: row.verificationUrl, intervalSec, exp: row.exp });
+  }
+  return rows;
+}
+
+function writeLoginFile(path: string, rows: Map<string, LoginRow>): void {
+  const body: Record<string, LoginRow> = {};
+  for (const [id, row] of rows) body[id] = row;
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, JSON.stringify(body), { mode: 0o600 });
+  chmodSync(path, 0o600);
+}
+
 function currentRow(
-  rows: Map<string, { deviceCode: string; verificationUrl: string; intervalSec: number; exp: number }>,
+  rows: Map<string, LoginRow>,
   id: string | null,
   now: () => number,
-): { deviceCode: string; verificationUrl: string; intervalSec: number; exp: number } | null {
+): LoginRow | null {
   if (!id) return null;
   const row = rows.get(id);
   if (!row || row.exp <= now()) {
@@ -455,8 +524,9 @@ export function clearLoginCookie(secure: boolean): string {
 }
 
 function serializeNamedCookie(name: string, value: string, secure: boolean, maxAge: number): string {
-  const parts = [`${name}=${value}`, 'HttpOnly', 'SameSite=Lax', 'Path=/', `Max-Age=${Math.max(0, Math.floor(maxAge))}`];
-  if (secure) parts.push('Secure');
+  const parts = [`${name}=${value}`, 'HttpOnly', 'Path=/', `Max-Age=${Math.max(0, Math.floor(maxAge))}`];
+  if (secure) parts.push('Secure', 'SameSite=None', 'Partitioned');
+  else parts.push('SameSite=Lax');
   return parts.join('; ');
 }
 

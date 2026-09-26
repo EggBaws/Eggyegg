@@ -93,7 +93,10 @@ const BODY_LIMIT = 8192;
 const userKeyDir = join(root, 'data/users');
 const sessions = createSessionStore();
 const desks = createDeskStore();
-const grokLogin = createGrokLogin({ allowedEmail: allowedAccountEmail(process.env.GOOGLE_ALLOWED_EMAIL) });
+const grokLogin = createGrokLogin({
+  allowedEmail: allowedAccountEmail(process.env.GOOGLE_ALLOWED_EMAIL),
+  storePath: join(root, 'data/sign-in.json'),
+});
 const loginLimit = createRateLimit({ limit: 8, windowMs: 15 * 60 * 1000 });
 let liveOwner: string | null = null;
 const SECURITY: Record<string, string> = {

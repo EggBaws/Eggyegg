@@ -142,6 +142,65 @@ describe('Grok sign-in', () => {
     assert.equal(login.pending(`choke_login=${id}`).pending, false);
   });
 
+  it('keeps a waiting Google login across a restart and opens it once authorised', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'choke-login-'));
+    const storePath = join(dir, 'sign-in.json');
+    let stage = 'wait';
+    const fetchImpl = async (url: string) => {
+      if (url.endsWith('/device/code')) {
+        return jsonResponse(200, {
+          device_code: 'device-secret',
+          verification_uri_complete: 'https://accounts.x.ai/oauth2/device?user_code=ABCD-EFGH',
+          expires_in: '1800',
+          interval: 5,
+        });
+      }
+      if (stage === 'wait') return jsonResponse(500, { error: 'temporarily_unavailable' });
+      return jsonResponse(200, { id_token: mint(claims()) });
+    };
+    const first = createGrokLogin({ now: () => NOW, allowedEmail: null, certs: async () => [jwk], fetchImpl, storePath });
+    const started = await first.begin(true);
+    assert.equal(started.ok, true);
+    if (!started.ok) return;
+    assert.match(started.setCookie, /Max-Age=1800/);
+    assert.match(started.setCookie, /SameSite=None/);
+    assert.equal(JSON.stringify(started).includes('device-secret'), false);
+    const id = /choke_login=([a-f0-9]{64})/.exec(started.setCookie)?.[1];
+    const waiting = await first.finish(`choke_login=${id}`, true);
+    assert.deepEqual(waiting, { ok: true, pending: true, intervalSec: 5 });
+    assert.equal(readFileSync(storePath, 'utf8').includes('device-secret'), true);
+    stage = 'done';
+    const restarted = createGrokLogin({ now: () => NOW, allowedEmail: null, certs: async () => [jwk], fetchImpl, storePath });
+    assert.equal(restarted.pending(`choke_login=${id}`).pending, true);
+    const done = await restarted.finish(`choke_login=${id}`, true);
+    assert.equal(done.ok, true);
+    if (!done.ok || done.pending) return;
+    assert.equal(done.email, EMAIL);
+    assert.equal(restarted.pending(`choke_login=${id}`).pending, false);
+  });
+
+  it('still waits when the device response omits expires_in', async () => {
+    const login = createGrokLogin({
+      now: () => NOW,
+      fetchImpl: async (url) => {
+        if (url.endsWith('/device/code')) {
+          return jsonResponse(200, {
+            device_code: 'device-secret',
+            verification_uri_complete: 'https://accounts.x.ai/oauth2/device?user_code=ABCD-EFGH',
+          });
+        }
+        return jsonResponse(400, { error: 'authorization_pending' });
+      },
+    });
+    const started = await login.begin(false);
+    assert.equal(started.ok, true);
+    if (!started.ok) return;
+    assert.match(started.setCookie, /Max-Age=900/);
+    const id = /choke_login=([a-f0-9]{64})/.exec(started.setCookie)?.[1];
+    const waiting = await login.finish(`choke_login=${id}`, false);
+    assert.equal(waiting.ok && waiting.pending, true);
+  });
+
   it('does not publish an email or a Google client id in the sign-in config', () => {
     const cfg = publicAuthConfig();
     assert.deepEqual(cfg, { provider: 'grok', configured: true });
@@ -164,6 +223,7 @@ describe('session gate', () => {
     assert.match(phone.setCookie, /SameSite=Lax/);
     assert.doesNotMatch(phone.setCookie, /Secure/);
     assert.match(laptop.setCookie, /Secure/);
+    assert.match(laptop.setCookie, /SameSite=None/);
     assert.equal(phone.setCookie.includes(EMAIL), false);
     assert.equal(phone.setCookie.includes(SUB), false);
     const phoneId = /choke_session=([a-f0-9]{64})/.exec(phone.setCookie)?.[1];
@@ -202,6 +262,8 @@ describe('session gate', () => {
     assert.equal(originAllowed({ origin: 'https://evil.example', host: '127.0.0.1:4173' }), false);
     assert.equal(originAllowed({ secFetchSite: 'cross-site' }), false);
     assert.equal(originAllowed({ secFetchSite: 'same-origin' }), true);
+    assert.equal(originAllowed({ origin: 'https://gogo.grok.me', host: '10.0.0.8:8080', secFetchSite: 'same-origin' }), true);
+    assert.equal(originAllowed({ origin: 'https://evil.example', host: 'gogo.grok.me', secFetchSite: 'cross-site' }), false);
     let clock = 0;
     const allow = createRateLimit({ limit: 2, windowMs: 1000, now: () => clock });
     assert.equal(allow('1.1.1.1'), true);

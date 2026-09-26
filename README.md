@@ -28,7 +28,7 @@ Override the port with `PORT`.
 
 The desk is closed until sign-in succeeds. **Continue with Google** uses Grok's account login at accounts.x.ai. Grok already handles Google. This app does not use a Google client id, a client secret, or Google Cloud, and it does not ask for Gmail, Drive, or Calendar. The only identity requested is the account itself (`openid`, `profile`, `email`).
 
-A session cookie is `HttpOnly` and `SameSite=Lax`, and it is `Secure` when the desk is behind HTTPS. The cookie holds a random id, not the email and not the exchange keys. Sessions live in memory, so a restart signs every screen out. Sign out on the desk ends a normal login.
+A session cookie is `HttpOnly`. On HTTPS it is `Secure` and `SameSite=None`, so the published page can finish sign-in. A local HTTP desk uses `SameSite=Lax`. The cookie holds a random id, not the email and not the exchange keys. Sessions live in memory, so a restart signs every screen out. A sign-in that is still waiting for Google is kept in `data/sign-in.json` (mode `0600`, gitignored). This page opens the desk on its own when that login finishes. Sign out on the desk ends a normal login.
 
 Each account has its own pair, timeframe, open backtest trade, and keys. Phone and laptop signed in as the same account each get their own cookie and the same desk. Chart zoom stays on the screen that set it. A different account does not see that desk. If the page is opened by a Grok viewer that is already signed in through the gate, the desk opens without another login button. The market tape is one process, so every signed-in account paints the same candles. Live fires belong to the account that turned them on. Another account cannot start or stop those fires.
 
