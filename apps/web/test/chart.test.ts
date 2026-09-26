@@ -22,8 +22,14 @@ function harness() {
     },
     removeEventListener() {},
     setPointerCapture() {},
+    scale: 1,
     getBoundingClientRect() {
-      return { left: 0, top: 0, width: canvas.clientWidth, height: canvas.clientHeight };
+      return {
+        left: 0,
+        top: 0,
+        width: canvas.clientWidth * canvas.scale,
+        height: canvas.clientHeight * canvas.scale,
+      };
     },
     getContext() {
       const ctx = {
@@ -102,13 +108,17 @@ function harness() {
   };
 }
 
-function gridSpread(ui: { clear(): void; wheel(deltaY: number, x?: number, y?: number): void; texts: string[] }) {
+function gridPrices(ui: { clear(): void; wheel(deltaY: number, x?: number, y?: number): void; texts: string[] }) {
   ui.clear();
-  ui.wheel(0, 400, 200);
+  ui.wheel(0, 120, 200);
   const nums = ui.texts
     .map((text) => Number(String(text).replace(/,/g, '')))
     .filter((n) => Number.isFinite(n));
-  const grid = nums.slice(0, 5);
+  return nums.slice(0, 5);
+}
+
+function gridSpread(ui: { clear(): void; wheel(deltaY: number, x?: number, y?: number): void; texts: string[] }) {
+  const grid = gridPrices(ui);
   return Math.max(...grid) - Math.min(...grid);
 }
 
@@ -200,6 +210,31 @@ describe('chart viewport', () => {
     ui.dbl(870, 200);
     const reset = gridSpread(ui);
     assert.ok(reset > dragged * 2);
+  });
+
+  it('hits the price column when the page is scaled, and does not jump back to the newest bars', () => {
+    const ui = harness();
+    ui.chart.setSeries(candles(80), [], 300_000);
+    const fitted = gridSpread(ui);
+    ui.canvas.scale = 0.5;
+    for (let i = 0; i < 6; i++) ui.wheel(-120, 430, 120);
+    ui.canvas.scale = 1;
+    const zoomed = gridSpread(ui);
+    assert.ok(zoomed < fitted * 0.75);
+    assert.equal(ui.texts.includes('Waiting for candles'), false);
+
+    const older = candles(80);
+    ui.chart.setSeries(older, [], 300_000);
+    ui.chart.fit();
+    for (let i = 0; i < 8; i++) ui.pan(80, 640);
+    const parked = gridPrices(ui);
+    const parkedMid = (Math.max(...parked) + Math.min(...parked)) / 2;
+    const jumped = older.concat(candles(40).map((candle, i) => ({ ...candle, time: candle.time + 80 * 300_000, open: 5000 + i, high: 5010 + i, low: 4990 + i, close: 5005 + i })));
+    ui.chart.setSeries(jumped, [], 300_000);
+    const stayed = gridPrices(ui);
+    const stayedMid = (Math.max(...stayed) + Math.min(...stayed)) / 2;
+    assert.ok(Math.abs(stayedMid - parkedMid) < 30);
+    assert.ok(stayedMid < 1000);
   });
 
   it('paints once the canvas has a size', () => {

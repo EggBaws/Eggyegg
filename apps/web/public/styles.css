@@ -144,6 +144,7 @@ tr.click[aria-pressed="true"] { background: #243024; }
   background: #0c100c;
   border-radius: 8px;
   touch-action: none;
+  overscroll-behavior: contain;
   cursor: crosshair;
 }
 .seg { display: flex; gap: 4px; }
