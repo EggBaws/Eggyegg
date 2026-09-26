@@ -303,6 +303,7 @@ function applyPayload(data) {
 }
 
 function showDesk(email) {
+  clearLoginMark();
   document.body.classList.remove('locked');
   document.querySelector('#desk').hidden = false;
   const account = document.querySelector('#account');
@@ -311,30 +312,64 @@ function showDesk(email) {
   void load();
 }
 
+function loginStarted() {
+  try {
+    return sessionStorage.getItem('chokeLogin') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function markLogin() {
+  try {
+    sessionStorage.setItem('chokeLogin', '1');
+  } catch {
+    /* private mode still polls while this page stays open */
+  }
+}
+
+function clearLoginMark() {
+  try {
+    sessionStorage.removeItem('chokeLogin');
+  } catch {
+    /* ignore */
+  }
+}
+
 function stopLoginPoll() {
   if (!loginPoll) return;
   clearInterval(loginPoll);
   loginPoll = 0;
 }
 
-function startLoginPoll(intervalSec) {
+async function pollOnce() {
+  const res = await fetch('/api/auth/poll', { method: 'POST', credentials: 'same-origin' });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok && data.email) {
+    stopLoginPoll();
+    showDesk(data.email);
+    return 'desk';
+  }
+  if (data.pending) return 'pending';
+  if (res.status === 401 && data.error) {
+    stopLoginPoll();
+    clearLoginMark();
+    document.querySelector('#gate-note').textContent = data.error;
+    return 'error';
+  }
+  return 'idle';
+}
+
+function startLoginPoll(intervalSec, immediate) {
   stopLoginPoll();
   const wait = Math.max(2, Number(intervalSec) || 5) * 1000;
   const tick = async () => {
-    const res = await fetch('/api/auth/poll', { method: 'POST', credentials: 'same-origin' });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && data.email) {
-      stopLoginPoll();
-      showDesk(data.email);
-      return;
-    }
-    if (data.pending) return;
-    if (res.status === 401 && data.error) {
-      stopLoginPoll();
-      document.querySelector('#gate-note').textContent = data.error;
+    const state = await pollOnce();
+    if (state === 'pending') {
+      document.querySelector('#gate-note').textContent = 'Leave this page open. It opens the desk as soon as Google is authorised.';
     }
   };
-  void tick();
+  if (immediate !== false) void tick();
   loginPoll = window.setInterval(() => {
     void tick();
   }, wait);
@@ -342,6 +377,7 @@ function startLoginPoll(intervalSec) {
 
 async function openIfSignedIn() {
   const note = document.querySelector('#gate-note');
+  const button = document.querySelector('#google-signin');
   try {
     const me = await fetch('/api/auth/me', { credentials: 'same-origin' });
     if (me.ok) {
@@ -352,17 +388,28 @@ async function openIfSignedIn() {
       }
     }
   } catch {
-    document.querySelector('#google-signin').hidden = false;
+    button.hidden = false;
     note.textContent = 'Sign-in is unavailable. The desk stays closed.';
     return;
   }
-  document.querySelector('#google-signin').hidden = false;
-  const pending = await fetch('/api/auth/pending', { credentials: 'same-origin' });
-  if (!pending.ok) return;
-  const data = await pending.json().catch(() => ({}));
-  if (!data.pending) return;
+  button.hidden = false;
+  let pending = false;
+  let intervalSec = 5;
+  try {
+    const res = await fetch('/api/auth/pending', { credentials: 'same-origin' });
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      pending = Boolean(data.pending);
+      if (data.intervalSec) intervalSec = data.intervalSec;
+    }
+  } catch {
+    pending = loginStarted();
+  }
+  if (!pending && !loginStarted()) return;
   note.textContent = 'Leave this page open. It opens the desk as soon as Google is authorised.';
-  startLoginPoll(data.intervalSec);
+  const state = await pollOnce();
+  if (state === 'desk' || state === 'error') return;
+  startLoginPoll(intervalSec, false);
 }
 
 async function continueWithGoogle() {
@@ -381,6 +428,7 @@ async function continueWithGoogle() {
     note.textContent = data.error || 'Sign-in did not start.';
     return;
   }
+  markLogin();
   const link = document.querySelector('#gate-open');
   if (popup && popup !== window) {
     popup.location = data.verificationUrl;
@@ -400,15 +448,21 @@ function showGate() {
   void openIfSignedIn();
 }
 
+let resumeFlight = null;
+function resumeLogin() {
+  if (!document.body.classList.contains('locked')) return;
+  if (resumeFlight) return;
+  resumeFlight = openIfSignedIn().finally(() => {
+    resumeFlight = null;
+  });
+}
+
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  if (!document.body.classList.contains('locked')) return;
-  void openIfSignedIn();
+  resumeLogin();
 });
-window.addEventListener('pageshow', () => {
-  if (!document.body.classList.contains('locked')) return;
-  void openIfSignedIn();
-});
+window.addEventListener('pageshow', resumeLogin);
+window.addEventListener('focus', resumeLogin);
 
 async function loadKeys() {
   const res = await fetch('/api/keys');

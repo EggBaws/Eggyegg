@@ -91,11 +91,10 @@ const TYPES: Record<string, string> = {
 };
 const BODY_LIMIT = 8192;
 const userKeyDir = join(root, 'data/users');
-const sessions = createSessionStore();
+const sessions = createSessionStore({ storePath: join(root, 'data/sessions.json') });
 const desks = createDeskStore();
 const grokLogin = createGrokLogin({
   allowedEmail: allowedAccountEmail(process.env.GOOGLE_ALLOWED_EMAIL),
-  storePath: join(root, 'data/sign-in.json'),
 });
 const loginLimit = createRateLimit({ limit: 8, windowMs: 15 * 60 * 1000 });
 let liveOwner: string | null = null;
@@ -462,7 +461,15 @@ const server = createServer(async (req, res) => {
         return;
       }
       if (finished.pending) {
-        reply({ pending: true, intervalSec: finished.intervalSec });
+        reply(
+          { pending: true, intervalSec: finished.intervalSec },
+          200,
+          finished.setCookie ? { 'set-cookie': finished.setCookie } : undefined,
+        );
+        return;
+      }
+      if (!('email' in finished) || !finished.email || !finished.sub || !finished.clearLogin) {
+        reply({ pending: false });
         return;
       }
       const issued = sessions.issue({ email: finished.email, sub: finished.sub }, secure);

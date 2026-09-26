@@ -64,6 +64,12 @@ function jsonResponse(status: number, body: unknown): { status: number; body: un
   return { status, body };
 }
 
+function loginHeader(setCookie: string): string {
+  const value = /choke_login=([^;]+)/.exec(setCookie)?.[1];
+  if (!value) throw new Error('login cookie missing');
+  return `choke_login=${value}`;
+}
+
 describe('Grok sign-in', () => {
   const opts = { allowedEmail: null as string | null, now: () => NOW, certs: async () => [jwk] };
 
@@ -128,23 +134,26 @@ describe('Grok sign-in', () => {
     assert.equal(started.verificationUrl.startsWith('https://accounts.x.ai/'), true);
     assert.equal(JSON.stringify(started).includes('device-secret'), false);
     assert.match(started.setCookie, /choke_login=/);
+    assert.match(started.setCookie, /HttpOnly/);
+    assert.match(started.setCookie, /SameSite=Lax/);
+    assert.doesNotMatch(started.setCookie, /SameSite=None/);
     assert.equal(started.setCookie.includes(EMAIL), false);
-    const id = /choke_login=([a-f0-9]{64})/.exec(started.setCookie)?.[1];
-    const waiting = await login.finish(`choke_login=${id}`, false);
+    assert.equal(started.setCookie.includes('device-secret'), false);
+    const cookie = loginHeader(started.setCookie);
+    const waiting = await login.finish(cookie, false);
     assert.deepEqual(waiting, { ok: true, pending: true, intervalSec: 5 });
-    const done = await login.finish(`choke_login=${id}`, false);
+    const done = await login.finish(cookie, false);
     assert.equal(done.ok, true);
     if (!done.ok || done.pending) return;
     assert.equal(done.email, EMAIL);
     assert.equal(done.sub, SUB);
     assert.equal(JSON.stringify(done).includes('should-not-leak'), false);
     assert.equal(JSON.stringify(done).includes('device-secret'), false);
-    assert.equal(login.pending(`choke_login=${id}`).pending, false);
+    assert.match(done.clearLogin, /Max-Age=0/);
+    assert.equal(login.pending(undefined).pending, false);
   });
 
-  it('keeps a waiting Google login across a restart and opens it once authorised', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'choke-login-'));
-    const storePath = join(dir, 'sign-in.json');
+  it('opens a waiting Google login from the cookie alone once authorised', async () => {
     let stage = 'wait';
     const fetchImpl = async (url: string) => {
       if (url.endsWith('/device/code')) {
@@ -156,27 +165,47 @@ describe('Grok sign-in', () => {
         });
       }
       if (stage === 'wait') return jsonResponse(500, { error: 'temporarily_unavailable' });
+      if (stage === 'slow') return jsonResponse(400, { error: 'slow_down' });
+      if (stage === 'dead') return jsonResponse(400, { error: 'expired_token' });
       return jsonResponse(200, { id_token: mint(claims()) });
     };
-    const first = createGrokLogin({ now: () => NOW, allowedEmail: null, certs: async () => [jwk], fetchImpl, storePath });
+    const first = createGrokLogin({ now: () => NOW, allowedEmail: null, certs: async () => [jwk], fetchImpl });
     const started = await first.begin(true);
     assert.equal(started.ok, true);
     if (!started.ok) return;
     assert.match(started.setCookie, /Max-Age=1800/);
-    assert.match(started.setCookie, /SameSite=None/);
-    assert.equal(JSON.stringify(started).includes('device-secret'), false);
-    const id = /choke_login=([a-f0-9]{64})/.exec(started.setCookie)?.[1];
-    const waiting = await first.finish(`choke_login=${id}`, true);
+    assert.match(started.setCookie, /Secure/);
+    assert.match(started.setCookie, /SameSite=Lax/);
+    assert.doesNotMatch(started.setCookie, /Partitioned/);
+    assert.equal(started.setCookie.includes('device-secret'), false);
+    const cookie = loginHeader(started.setCookie);
+    const waiting = await first.finish(cookie, true);
     assert.deepEqual(waiting, { ok: true, pending: true, intervalSec: 5 });
-    assert.equal(readFileSync(storePath, 'utf8').includes('device-secret'), true);
+    const idle = await first.finish(undefined, true);
+    assert.deepEqual(idle, { ok: true, pending: false });
+    assert.equal(JSON.stringify(idle).includes('clearLogin'), false);
+    stage = 'slow';
+    const slowed = await first.finish(cookie, true);
+    assert.equal(slowed.ok && slowed.pending && slowed.intervalSec, 10);
+    if (!slowed.ok || !slowed.pending || !slowed.setCookie) return;
+    assert.match(slowed.setCookie, /SameSite=Lax/);
+    const next = loginHeader(slowed.setCookie);
+    stage = 'dead';
+    const dead = await first.finish(next, true);
+    assert.equal(dead.ok, false);
+    if (dead.ok) return;
+    assert.equal(dead.error, 'Sign-in expired. Try again.');
+    assert.match(dead.clearLogin ?? '', /Max-Age=0/);
     stage = 'done';
-    const restarted = createGrokLogin({ now: () => NOW, allowedEmail: null, certs: async () => [jwk], fetchImpl, storePath });
-    assert.equal(restarted.pending(`choke_login=${id}`).pending, true);
-    const done = await restarted.finish(`choke_login=${id}`, true);
+    const restarted = createGrokLogin({ now: () => NOW, allowedEmail: null, certs: async () => [jwk], fetchImpl });
+    assert.equal(restarted.pending(cookie).pending, true);
+    assert.equal(restarted.pending(cookie).intervalSec, 5);
+    const done = await restarted.finish(cookie, true);
     assert.equal(done.ok, true);
     if (!done.ok || done.pending) return;
     assert.equal(done.email, EMAIL);
-    assert.equal(restarted.pending(`choke_login=${id}`).pending, false);
+    assert.match(done.clearLogin, /Max-Age=0/);
+    assert.equal(restarted.pending(undefined).pending, false);
   });
 
   it('still waits when the device response omits expires_in', async () => {
@@ -196,8 +225,7 @@ describe('Grok sign-in', () => {
     assert.equal(started.ok, true);
     if (!started.ok) return;
     assert.match(started.setCookie, /Max-Age=900/);
-    const id = /choke_login=([a-f0-9]{64})/.exec(started.setCookie)?.[1];
-    const waiting = await login.finish(`choke_login=${id}`, false);
+    const waiting = await login.finish(loginHeader(started.setCookie), false);
     assert.equal(waiting.ok && waiting.pending, true);
   });
 
@@ -223,7 +251,8 @@ describe('session gate', () => {
     assert.match(phone.setCookie, /SameSite=Lax/);
     assert.doesNotMatch(phone.setCookie, /Secure/);
     assert.match(laptop.setCookie, /Secure/);
-    assert.match(laptop.setCookie, /SameSite=None/);
+    assert.match(laptop.setCookie, /SameSite=Lax/);
+    assert.doesNotMatch(laptop.setCookie, /SameSite=None/);
     assert.equal(phone.setCookie.includes(EMAIL), false);
     assert.equal(phone.setCookie.includes(SUB), false);
     const phoneId = /choke_session=([a-f0-9]{64})/.exec(phone.setCookie)?.[1];
@@ -240,6 +269,15 @@ describe('session gate', () => {
     clock = 10_000;
     assert.equal(store.read(`choke_session=${laptopId}`), null);
     assert.match(clearSessionCookie(false), /Max-Age=0/);
+    const dir = mkdtempSync(join(tmpdir(), 'choke-session-'));
+    const path = join(dir, 'sessions.json');
+    const kept = createSessionStore({ now: () => 5_000, ttlMs: 60_000, storePath: path });
+    const issued = kept.issue({ email: EMAIL, sub: SUB }, true);
+    assert.equal(readFileSync(path, 'utf8').includes(EMAIL), true);
+    assert.equal(readFileSync(path, 'utf8').includes('apiSecret'), false);
+    const again = createSessionStore({ now: () => 5_000, ttlMs: 60_000, storePath: path });
+    const sid = /choke_session=([a-f0-9]{64})/.exec(issued.setCookie)?.[1];
+    assert.equal(again.read(`choke_session=${sid}`)?.email, EMAIL);
   });
 
   it('rejects desk routes without a session', () => {

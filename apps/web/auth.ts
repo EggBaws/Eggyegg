@@ -129,10 +129,20 @@ export function createRateLimit(opts: { limit: number; windowMs: number; now?: (
   };
 }
 
-export function createSessionStore(opts?: { now?: () => number; ttlMs?: number }): SessionStore {
+export function createSessionStore(opts?: { now?: () => number; ttlMs?: number; storePath?: string }): SessionStore {
   const now = opts?.now ?? (() => Date.now());
   const ttl = opts?.ttlMs ?? SESSION_TTL_MS;
-  const rows = new Map<string, SessionRow>();
+  const storePath = opts?.storePath;
+  const rows = storePath ? readSessionFile(storePath, now()) : new Map<string, SessionRow>();
+
+  function persist(): void {
+    if (!storePath) return;
+    try {
+      writeSessionFile(storePath, rows);
+    } catch {
+      // A read-only disk still keeps the session for this process.
+    }
+  }
 
   function readId(cookieHeader: string | undefined): string | null {
     if (!cookieHeader) return null;
@@ -153,6 +163,7 @@ export function createSessionStore(opts?: { now?: () => number; ttlMs?: number }
     issue(account: AccountSession, secure: boolean) {
       const id = randomBytes(32).toString('hex');
       rows.set(id, { email: account.email, sub: account.sub, exp: now() + ttl });
+      persist();
       return { setCookie: serializeCookie(id, secure, Math.floor(ttl / 1000)) };
     },
     read(cookieHeader: string | undefined) {
@@ -160,7 +171,10 @@ export function createSessionStore(opts?: { now?: () => number; ttlMs?: number }
       if (!id) return null;
       const row = rows.get(id);
       if (!row || row.exp <= now()) {
-        if (row) rows.delete(id);
+        if (row) {
+          rows.delete(id);
+          persist();
+        }
         return null;
       }
       row.exp = now() + ttl;
@@ -168,7 +182,7 @@ export function createSessionStore(opts?: { now?: () => number; ttlMs?: number }
     },
     revoke(cookieHeader: string | undefined) {
       const id = readId(cookieHeader);
-      if (id) rows.delete(id);
+      if (id && rows.delete(id)) persist();
     },
   };
 }
@@ -222,10 +236,11 @@ export interface GrokLogin {
     | { ok: true; setCookie: string; verificationUrl: string; intervalSec: number }
     | { ok: false; error: string }
   >;
-  pending(cookieHeader: string | undefined): { pending: boolean; verificationUrl?: string };
+  pending(cookieHeader: string | undefined): { pending: boolean; verificationUrl?: string; intervalSec?: number };
   finish(cookieHeader: string | undefined, secure: boolean): Promise<
-    | { ok: true; pending: true; intervalSec: number }
-    | { ok: true; pending: false; email: string; sub: string; setCookie: string; clearLogin: string }
+    | { ok: true; pending: true; intervalSec: number; setCookie?: string }
+    | { ok: true; pending: false; email: string; sub: string; clearLogin: string }
+    | { ok: true; pending: false }
     | { ok: false; error: string; clearLogin?: string }
   >;
 }
@@ -243,25 +258,12 @@ export function createGrokLogin(opts?: {
   allowedEmail?: string | null;
   fetchImpl?: (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ status: number; body: unknown }>;
   certs?: () => Promise<Jwk[]>;
-  /** Survives a process restart so a finished Google login can still open the desk. */
-  storePath?: string;
 }): GrokLogin {
   const now = opts?.now ?? (() => Date.now());
   const clientId = opts?.clientId ?? GROK_CLIENT_ID;
   const allowedEmail = opts?.allowedEmail ?? null;
   const fetchImpl = opts?.fetchImpl ?? defaultFetch;
   const certs = opts?.certs;
-  const storePath = opts?.storePath;
-  const rows = storePath ? readLoginFile(storePath, now()) : new Map<string, LoginRow>();
-
-  function readLoginId(cookieHeader: string | undefined): string | null {
-    return readCookie(cookieHeader, LOGIN_COOKIE);
-  }
-
-  function persist(): void {
-    if (!storePath) return;
-    writeLoginFile(storePath, rows);
-  }
 
   return {
     async begin(secure: boolean) {
@@ -277,33 +279,31 @@ export function createGrokLogin(opts?: {
         : typeof payload.verification_uri === 'string'
           ? payload.verification_uri
           : '';
-      const intervalSec = typeof payload.interval === 'number' && payload.interval > 0 ? payload.interval : 5;
+      const intervalSec = typeof payload.interval === 'number' && payload.interval > 0 ? Math.min(payload.interval, 60) : 5;
       const expiresIn = loginLifetimeSec(payload.expires_in);
       if (started.status !== 200 || !deviceCode || !verificationUrl.startsWith('https://accounts.x.ai/')) {
         return { ok: false, error: 'Sign-in did not start.' };
       }
-      const id = randomBytes(32).toString('hex');
-      rows.set(id, { deviceCode, verificationUrl, intervalSec, exp: now() + expiresIn * 1000 });
-      persist();
+      const row: LoginRow = { deviceCode, verificationUrl, intervalSec, exp: now() + expiresIn * 1000 };
       return {
         ok: true,
-        setCookie: serializeNamedCookie(LOGIN_COOKIE, id, secure, expiresIn),
+        setCookie: serializeNamedCookie(LOGIN_COOKIE, encodeTicket(row), secure, expiresIn),
         verificationUrl,
         intervalSec,
       };
     },
     pending(cookieHeader: string | undefined) {
-      const row = currentRow(rows, readLoginId(cookieHeader), now);
-      if (!row) return { pending: false };
-      return { pending: true, verificationUrl: row.verificationUrl };
+      const found = loginFromCookie(cookieHeader, now());
+      if (!found || found.expired) return { pending: false };
+      return { pending: true, verificationUrl: found.row.verificationUrl, intervalSec: found.row.intervalSec };
     },
     async finish(cookieHeader: string | undefined, secure: boolean) {
-      const id = readLoginId(cookieHeader);
-      const row = currentRow(rows, id, now);
-      if (!id || !row) {
-        if (id) persist();
+      const found = loginFromCookie(cookieHeader, now());
+      if (!found) return { ok: true, pending: false };
+      if (found.expired) {
         return { ok: false, error: 'Sign-in expired. Try again.', clearLogin: clearNamedCookie(LOGIN_COOKIE, secure) };
       }
+      const row = found.row;
       let token: { status: number; body: unknown };
       try {
         token = await fetchImpl('https://auth.x.ai/oauth2/token', {
@@ -323,22 +323,28 @@ export function createGrokLogin(opts?: {
       if (token.status >= 500 || err === 'temporarily_unavailable') {
         return { ok: true, pending: true, intervalSec: row.intervalSec };
       }
-      if (err === 'authorization_pending' || err === 'slow_down') {
-        if (err === 'slow_down') {
-          row.intervalSec += 5;
-          persist();
-        }
+      if (err === 'authorization_pending') {
         return { ok: true, pending: true, intervalSec: row.intervalSec };
       }
-      rows.delete(id);
-      persist();
+      if (err === 'slow_down') {
+        const intervalSec = Math.min(row.intervalSec + 5, 60);
+        const next: LoginRow = { ...row, intervalSec };
+        const life = Math.max(1, Math.ceil((row.exp - now()) / 1000));
+        return {
+          ok: true,
+          pending: true,
+          intervalSec,
+          setCookie: serializeNamedCookie(LOGIN_COOKIE, encodeTicket(next), secure, life),
+        };
+      }
       const clearLogin = clearNamedCookie(LOGIN_COOKIE, secure);
+      if (err === 'expired_token') return { ok: false, error: 'Sign-in expired. Try again.', clearLogin };
       if (token.status !== 200 || typeof payload.id_token !== 'string') {
         return { ok: false, error: 'Sign-in failed.', clearLogin };
       }
       const verdict = await verifyXaiIdToken(payload.id_token, { clientId, allowedEmail, now, certs });
       if (!verdict.ok) return { ok: false, error: 'Sign-in failed.', clearLogin };
-      return { ok: true, pending: false, email: verdict.email, sub: verdict.sub, setCookie: '', clearLogin };
+      return { ok: true, pending: false, email: verdict.email, sub: verdict.sub, clearLogin };
     },
   };
 }
@@ -452,8 +458,8 @@ function loginLifetimeSec(value: unknown): number {
   return Math.min(Math.floor(parsed), 3600);
 }
 
-function readLoginFile(path: string, nowMs: number): Map<string, LoginRow> {
-  const rows = new Map<string, LoginRow>();
+function readSessionFile(path: string, nowMs: number): Map<string, SessionRow> {
+  const rows = new Map<string, SessionRow>();
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(path, 'utf8'));
@@ -463,46 +469,58 @@ function readLoginFile(path: string, nowMs: number): Map<string, LoginRow> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return rows;
   for (const [id, value] of Object.entries(raw)) {
     if (!/^[a-f0-9]{64}$/.test(id) || !value || typeof value !== 'object' || Array.isArray(value)) continue;
-    const row = value as Partial<LoginRow>;
-    if (typeof row.deviceCode !== 'string' || !row.deviceCode) continue;
-    if (typeof row.verificationUrl !== 'string' || !row.verificationUrl.startsWith('https://accounts.x.ai/')) continue;
+    const row = value as Partial<SessionRow>;
+    if (typeof row.email !== 'string' || !row.email.includes('@')) continue;
+    if (typeof row.sub !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(row.sub)) continue;
     if (typeof row.exp !== 'number' || row.exp <= nowMs) continue;
-    const intervalSec = typeof row.intervalSec === 'number' && row.intervalSec > 0 ? row.intervalSec : 5;
-    rows.set(id, { deviceCode: row.deviceCode, verificationUrl: row.verificationUrl, intervalSec, exp: row.exp });
+    rows.set(id, { email: row.email, sub: row.sub, exp: row.exp });
   }
   return rows;
 }
 
-function writeLoginFile(path: string, rows: Map<string, LoginRow>): void {
-  const body: Record<string, LoginRow> = {};
+function writeSessionFile(path: string, rows: Map<string, SessionRow>): void {
+  const body: Record<string, SessionRow> = {};
   for (const [id, row] of rows) body[id] = row;
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(path, JSON.stringify(body), { mode: 0o600 });
   chmodSync(path, 0o600);
 }
 
-function currentRow(
-  rows: Map<string, LoginRow>,
-  id: string | null,
-  now: () => number,
-): LoginRow | null {
-  if (!id) return null;
-  const row = rows.get(id);
-  if (!row || row.exp <= now()) {
-    if (row) rows.delete(id);
-    return null;
-  }
-  return row;
+function encodeTicket(row: LoginRow): string {
+  return Buffer.from(JSON.stringify(row)).toString('base64url');
 }
 
-function readCookie(cookieHeader: string | undefined, name: string): string | null {
+function loginFromCookie(cookieHeader: string | undefined, nowMs: number): { row: LoginRow; expired: false } | { expired: true } | null {
+  const value = readNamedCookie(cookieHeader, LOGIN_COOKIE);
+  if (!value) return null;
+  if (value.length < 20 || value.length > 3500 || !/^[A-Za-z0-9_-]+$/.test(value)) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const row = raw as Partial<LoginRow>;
+  if (typeof row.deviceCode !== 'string' || row.deviceCode.length < 8 || row.deviceCode.length > 512) return null;
+  if (typeof row.verificationUrl !== 'string' || !row.verificationUrl.startsWith('https://accounts.x.ai/')) return null;
+  if (typeof row.exp !== 'number' || !Number.isFinite(row.exp)) return null;
+  if (row.exp <= nowMs) return { expired: true };
+  const intervalSec = typeof row.intervalSec === 'number' && row.intervalSec > 0 ? Math.min(row.intervalSec, 60) : 5;
+  return {
+    expired: false,
+    row: { deviceCode: row.deviceCode, verificationUrl: row.verificationUrl, intervalSec, exp: row.exp },
+  };
+}
+
+function readNamedCookie(cookieHeader: string | undefined, name: string): string | null {
   if (!cookieHeader) return null;
   for (const part of cookieHeader.split(';')) {
     const eq = part.indexOf('=');
     if (eq === -1) continue;
     if (part.slice(0, eq).trim() !== name) continue;
     const value = part.slice(eq + 1).trim();
-    if (!/^[a-f0-9]{64}$/.test(value)) return null;
+    if (!value || value.length > 3500) return null;
     return value;
   }
   return null;
@@ -525,8 +543,8 @@ export function clearLoginCookie(secure: boolean): string {
 
 function serializeNamedCookie(name: string, value: string, secure: boolean, maxAge: number): string {
   const parts = [`${name}=${value}`, 'HttpOnly', 'Path=/', `Max-Age=${Math.max(0, Math.floor(maxAge))}`];
-  if (secure) parts.push('Secure', 'SameSite=None', 'Partitioned');
-  else parts.push('SameSite=Lax');
+  if (secure) parts.push('Secure');
+  parts.push('SameSite=Lax');
   return parts.join('; ');
 }
 
