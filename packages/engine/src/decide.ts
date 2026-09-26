@@ -24,6 +24,10 @@ export interface DecideInput {
   btcAligned: boolean;
   displacementWithoutSweep: boolean;
   fillsAtCap: boolean;
+  /** Two trades are already open. The setup can arm when one closes. */
+  slotsFull: boolean;
+  /** Balance scaling is on and there is no usable margin. */
+  noSize: boolean;
 }
 
 export interface Decision {
@@ -64,6 +68,8 @@ export function decide(input: DecideInput): Decision {
   if (input.fillsAtCap) return { state: 'BLOCKED', reason: 'MAX_FILLS', fire: false };
   if (!input.venueHealthy) return { state: 'BLOCKED', reason: SPIT.VENUE_UNHEALTHY, fire: false };
   if (input.stale) return { state: 'WAIT_RETRACE', reason: 'STALE_DATA', fire: false };
+  if (input.slotsFull) return { state: 'WAIT_RETRACE', reason: 'SLOTS_FULL', fire: false };
+  if (input.noSize) return { state: 'WAIT_RETRACE', reason: 'NO_BALANCE', fire: false };
   return {
     state: 'ARM',
     reason: input.liveArmed ? null : SPIT.LIVE_OFF,

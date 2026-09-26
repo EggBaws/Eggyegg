@@ -30,6 +30,12 @@ export interface AppConfig {
   active_venue: VenueId;
   pairs: PairId[];
   stake_gbp: number;
+  /** Desk only. How many trades may be open at once. The published book ignores this. */
+  balance_slots: number;
+  /** Desk paper balance in USDT until MEXC reports equity. */
+  balance_start_usdt: number;
+  /** Fraction of a slot left unused so the fee does not reject the order. */
+  balance_reserve_frac: number;
   leverage: number;
   max_margin_risk: number;
   tp_price_pct: number;
@@ -75,6 +81,8 @@ export interface OrderDraft {
   marginRiskPct: number;
   leverage: number;
   tpPricePct: number;
+  /** Margin used for this order, in USDT. The published book stake when balance scaling is off. */
+  stakeUsdt: number;
 }
 
 export interface CancelRecord {

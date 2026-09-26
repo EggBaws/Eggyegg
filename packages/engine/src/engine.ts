@@ -14,7 +14,7 @@ import {
 import { appendOrderLog } from './dryRun.ts';
 import { holidayAt } from './holidays.ts';
 import { formatPrice, roundToTick } from './math.ts';
-import { acceptableEntry, isFatStop, marginRiskPct, positionQty, stopLoss, takeProfit } from './risk.ts';
+import { acceptableEntry, isFatStop, marginRiskPct, positionQty, slotStake, stopLoss, takeProfit } from './risk.ts';
 import { priceReached } from './runner.ts';
 import { selectProfile, selectiveFacts, stopIsWideEnough, stopIsWithinCap, stopProtects } from './select.ts';
 import { initialRuntime, muteRuntime, stepPair, type PairRuntime, type SetupFacts } from './stateMachine.ts';
@@ -55,6 +55,8 @@ export interface VenuePort {
   moveProtection?(req: { pair: string; orderId: string; sl: number; tp: number }):
     | { ok: boolean; error?: string }
     | Promise<{ ok: boolean; error?: string }>;
+  /** Live USDT equity. Absent on the paper venue and on the published-book engine. */
+  accountEquity?(): Promise<{ equity: number; available: number } | null>;
 }
 
 interface RunnerTrack {
@@ -93,6 +95,11 @@ export interface EngineOptions {
   dailyPnlGbp?: number;
   /** Backtest and tests that must not touch logs/orders.json. */
   skipOrderLog?: boolean;
+  /**
+   * Desk sizing. Each new order uses one slot of the USDT balance.
+   * Omit this for the published book, which keeps stake_gbp.
+   */
+  balanceScale?: { slots: number; reserveFrac: number; startUsdt: number };
 }
 
 interface BtcMemo {
@@ -119,6 +126,12 @@ export interface BookSnapshot {
   dailyPnlGbp: number;
   fillsToday: number;
   pairs: PairOverlay[];
+  /** USDT equity the next order is sized from. Null on the published-book engine. */
+  balanceUsdt: number | null;
+  /** Margin of the next order. Null on the published-book engine. */
+  tradeStakeUsdt: number | null;
+  openTrades: number;
+  balanceSlots: number | null;
 }
 
 const PING_STATES = new Set(['FORMING', 'ARM', 'NEED_DEEPER', 'DONE', 'EXPIRED', 'SPIT']);
@@ -136,6 +149,9 @@ export class ChokeEngine {
   private bookDay: string | null = null;
   private liveArmed: boolean;
   private venueCalls = 0;
+  private readonly balanceScale: { slots: number; reserveFrac: number; startUsdt: number } | null;
+  private paperEquity: number;
+  private equityCache: { at: number; equity: number; available: number } | null = null;
 
   constructor(opts: EngineOptions) {
     this.config = opts.config;
@@ -146,6 +162,12 @@ export class ChokeEngine {
     this.liveArmed = opts.config.live_armed;
     this.fillsToday = opts.fillsToday ?? 0;
     this.dailyPnlGbp = opts.dailyPnlGbp ?? 0;
+    const scale = opts.balanceScale;
+    this.balanceScale =
+      scale && scale.slots >= 1 && scale.startUsdt > 0
+        ? { slots: scale.slots, reserveFrac: scale.reserveFrac, startUsdt: scale.startUsdt }
+        : null;
+    this.paperEquity = this.balanceScale?.startUsdt ?? opts.config.stake_gbp;
     for (const pair of opts.config.pairs) {
       const rt = initialRuntime(pair);
       this.records.set(pair, {
@@ -172,6 +194,14 @@ export class ChokeEngine {
     for (const [pair, rec] of this.records) {
       this.records.set(pair, { ...rec, view: { ...rec.view, liveArmed: on } });
     }
+  }
+
+  /** Read USDT equity as soon as live fires turn on, so the desk shows the account before the next candle. */
+  async pullEquity(nowMs: number): Promise<boolean> {
+    if (!this.balanceScale) return false;
+    this.equityCache = null;
+    const row = await this.readEquity(nowMs, this.workingBook().locked);
+    return row != null && row.equity > 0;
   }
 
   setVenue(venue: VenuePort): void {
@@ -228,6 +258,10 @@ export class ChokeEngine {
       dailyPnlGbp: this.dailyPnlGbp,
       fillsToday: this.fillsToday,
       pairs: this.config.pairs.map((p) => this.must(p).view),
+      balanceUsdt: this.balanceScale ? this.shownEquity() : null,
+      tradeStakeUsdt: this.balanceScale ? this.shownStake() : null,
+      openTrades: this.workingBook().count,
+      balanceSlots: this.balanceScale ? this.balanceScale.slots : null,
     };
   }
 
@@ -270,6 +304,7 @@ export class ChokeEngine {
         ? update.nowMs - (lastClosed.time + tfMs(selected.timeframe)) > this.config.stale_close_ms
         : true);
 
+    const sized = await this.sizeFor(update.nowMs);
     const priced = priceSetup({
       candles: selected.candles,
       structure,
@@ -299,12 +334,14 @@ export class ChokeEngine {
       holiday: holiday.active,
       btcAligned,
       fillsAtCap: this.fillsToday >= this.config.max_fills_across_book,
+      slotsFull: sized.slotsFull,
+      noSize: sized.noSize,
       boxId: structure.sweep && side ? `${side}:${structure.sweep.timeMs}` : null,
       side,
     };
 
     const draft = priced.entry != null && priced.sl != null && priced.lock != null && priced.tp != null && side
-      ? this.draftOrder(update, side, priced.entry, priced.sl, priced.lock, priced.tp, btcAligned)
+      ? this.draftOrder(update, side, priced.entry, priced.sl, priced.lock, priced.tp, btcAligned, sized.stake)
       : null;
 
     const rec = this.must(update.pair);
@@ -480,6 +517,7 @@ export class ChokeEngine {
     lock: number,
     tp: number,
     btcAligned: boolean,
+    stake: number,
   ): OrderDraft {
     const live = this.liveArmed;
     return {
@@ -488,7 +526,7 @@ export class ChokeEngine {
       side: side === 'long' ? 'buy' : 'sell',
       type: 'LIMIT',
       price: entry,
-      qty: positionQty(this.config.stake_gbp, this.config.leverage, entry, sl, this.config.max_margin_risk),
+      qty: positionQty(stake, this.config.leverage, entry, sl, this.config.max_margin_risk),
       sl,
       lockPrice: lock,
       tp,
@@ -503,6 +541,7 @@ export class ChokeEngine {
       marginRiskPct: marginRiskPct(entry, sl, this.config.leverage),
       leverage: this.config.leverage,
       tpPricePct: this.config.tp_price_pct,
+      stakeUsdt: stake,
     };
   }
 
@@ -695,6 +734,62 @@ export class ChokeEngine {
     return next;
   }
 
+  private workingBook(): { count: number; locked: number } {
+    let count = 0;
+    let locked = 0;
+    for (const rec of this.records.values()) {
+      const order = rec.runtime.order;
+      if (rec.runtime.state !== 'WORKING' || !order) continue;
+      count += 1;
+      locked += (order.qty * order.price) / this.config.leverage;
+    }
+    return { count, locked };
+  }
+
+  private shownEquity(): number {
+    return this.equityCache?.equity ?? this.paperEquity;
+  }
+
+  private shownStake(): number {
+    const scale = this.balanceScale;
+    if (!scale) return this.config.stake_gbp;
+    return slotStake(this.shownEquity(), this.shownEquity(), scale.slots, scale.reserveFrac);
+  }
+
+  /** Stake for the order about to be drafted. Published book uses stake_gbp. */
+  private async sizeFor(nowMs: number): Promise<{ stake: number; slotsFull: boolean; noSize: boolean }> {
+    const book = this.workingBook();
+    if (!this.balanceScale) {
+      return { stake: this.config.stake_gbp, slotsFull: false, noSize: false };
+    }
+    const scale = this.balanceScale;
+    const slotsFull = book.count >= scale.slots;
+    const row = await this.readEquity(nowMs, book.locked);
+    if (!row) return { stake: 0, slotsFull, noSize: !slotsFull };
+    const stake = slotStake(row.equity, row.available, scale.slots, scale.reserveFrac);
+    return { stake, slotsFull, noSize: !slotsFull && !(stake > 0) };
+  }
+
+  private async readEquity(nowMs: number, locked: number): Promise<{ equity: number; available: number } | null> {
+    const scale = this.balanceScale;
+    if (!scale) return null;
+    if (!this.liveArmed || !this.venue.accountEquity) {
+      return { equity: this.paperEquity, available: Math.max(0, this.paperEquity - locked) };
+    }
+    if (this.equityCache && nowMs - this.equityCache.at < 5_000) return this.equityCache;
+    try {
+      const row = await this.venue.accountEquity();
+      if (row && row.equity > 0 && row.available >= 0) {
+        this.equityCache = { at: nowMs, equity: row.equity, available: row.available };
+        this.paperEquity = row.equity;
+        return this.equityCache;
+      }
+    } catch {
+      // Keep the last good read. A missed call must not invent a size.
+    }
+    return this.equityCache;
+  }
+
   private must(pair: PairId): PairRecord {
     const rec = this.records.get(pair);
     if (!rec) throw new Error(`unknown pair ${pair}`);
@@ -856,6 +951,7 @@ export function formatArmPing(order: OrderDraft, tick: number): string {
   return [
     `${name} ARM first-tag`,
     `${verb} ${formatPrice(order.price, tick)}`,
+    `size ${order.stakeUsdt.toFixed(2)} USDT`,
     `sl ${formatPrice(order.sl, tick)} (${pct}% margin @${order.leverage}x)`,
     `lock ${formatPrice(order.lockPrice, tick)} (${ofEntry(order.lockPrice)})`,
     `tp ${formatPrice(order.tp, tick)} (${ofEntry(order.tp)})`,

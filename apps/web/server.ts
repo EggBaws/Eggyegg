@@ -82,6 +82,11 @@ function bootDemo(): ChokeEngine {
     venue: stub,
     notifier,
     dryRunPath,
+    balanceScale: {
+      slots: config.balance_slots,
+      reserveFrac: config.balance_reserve_frac,
+      startUsdt: config.balance_start_usdt,
+    },
   });
 }
 
@@ -659,7 +664,10 @@ async function onRequest(req: IncomingMessage, res: ServerResponse): Promise<voi
       engine.setVenue(liveVenue);
       engine.setLiveArmed(true);
       liveOwner = sub;
-      const message = 'Live fires are on. The next fresh 5m close can send a LIMIT with a stop and a target. Market orders are never sent.';
+      const sawBalance = await engine.pullEquity(Date.now());
+      const message = sawBalance
+        ? 'Live fires are on. Each trade uses half the MEXC USDT balance. Two can be open. The next fresh 5m close can send a LIMIT with a stop and a target.'
+        : 'Live fires are on, but MEXC did not return a USDT balance. Nothing is sent until that balance is read.';
       tapeMessage = message;
       sendJson(res, { ok: true, liveArmed: true, message, state: publicState(sub, message) });
       return;

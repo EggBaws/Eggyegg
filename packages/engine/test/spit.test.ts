@@ -30,6 +30,8 @@ function ready(over: Partial<DecideInput> = {}): DecideInput {
     btcAligned: false,
     displacementWithoutSweep: false,
     fillsAtCap: false,
+    slotsFull: false,
+    noSize: false,
     ...over,
   };
 }
@@ -71,6 +73,10 @@ describe('SPIT codes', () => {
     assert.equal(decide(ready({ secondOnSameBox: true, alreadyUsed: true })).reason, SPIT.SECOND_ON_SAME_BOX);
     assert.equal(decide(ready({ venueHealthy: false })).reason, SPIT.VENUE_UNHEALTHY);
     assert.equal(decide(ready({ dailyKill: true })).reason, SPIT.DAILY_KILL);
+    assert.equal(decide(ready({ slotsFull: true })).reason, 'SLOTS_FULL');
+    assert.equal(decide(ready({ slotsFull: true })).fire, false);
+    assert.equal(decide(ready({ noSize: true })).reason, 'NO_BALANCE');
+    assert.equal(decide(ready({ noSize: true })).fire, false);
     assert.equal(decide(ready()).state, 'ARM');
   });
 

@@ -100,7 +100,10 @@ The ETH morning example still arms: entry 2650.20, stop 2639.20, lock 2685.45, t
 | `live_armed` | `false` | Exchange send gate |
 | `active_venue` | `kucoin` | `kucoin` or `mexc` |
 | `pairs` | BTCUSDT, ETHUSDT, SOLUSDT | Book |
-| `stake_gbp` | `1000` | Paper stake. Sizing uses this figure against USDT distance with no FX conversion |
+| `stake_gbp` | `1000` | Published book stake. The replay still sizes every trade from this figure, with no FX conversion |
+| `balance_slots` | `2` | Desk only. Trades that may be open at once. A third setup waits as `SLOTS_FULL` |
+| `balance_start_usdt` | `100` | Desk paper balance until MEXC reports USDT equity |
+| `balance_reserve_frac` | `0.02` | Slice of each slot left unused so the fee does not reject the order |
 | `leverage` | `10` | Margin risk and notional |
 | `max_margin_risk` | `0.06` | 6% of stake. Wider than this is `NEED_DEEPER`, not a fill |
 | `tp_price_pct` | `0.0133` | Lock. When price trades 1.33%, the stop moves to that price |
@@ -117,7 +120,9 @@ The ETH morning example still arms: entry 2650.20, stop 2639.20, lock 2685.45, t
 
 `btc_aligned` is true when BTC's 5m printed a sweep on the same UK date in the same direction. ETH or SOL can `ARM` while it is false.
 
-The resting target is `entry * (1 ± 0.0183)`. The stop starts one tick beyond the sweep wick. Once price trades the 1.33% lock, that stop moves to the lock, on the chart and on the MEXC order. A pullback to the lock closes the 1.33% win. A hold through 1.83% takes the further target. Quantity is the minimum of stake × leverage and the size whose stop loss is about stake × 6%.
+The resting target is `entry * (1 ± 0.0183)`. The stop starts one tick beyond the sweep wick. Once price trades the 1.33% lock, that stop moves to the lock, on the chart and on the MEXC order. A pullback to the lock closes the 1.33% win. A hold through 1.83% takes the further target. On the published book, quantity is the minimum of stake × leverage and the size whose stop loss is about stake × 6%.
+
+The desk sizes from the balance instead. It starts at 100 USDT. Once live fires are on it reads MEXC USDT equity and available margin. Each new order takes one of two slots, about half the equity, and leaves 2% of that slot unused. Two trades can be open. A third waits until one closes. The limit, the stop, the 1.33% lock, and the 1.83% runner stay the same. Only the coin quantity changes. The six-month book is still the fixed £1,000 stake.
 
 ## States
 

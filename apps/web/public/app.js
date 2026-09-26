@@ -105,6 +105,14 @@ function render() {
   toggle.textContent = snapshot.liveArmed ? 'Stop live fires' : 'Start live fires';
   toggle.className = snapshot.liveArmed ? 'armed' : '';
   if (snapshot.message) document.querySelector('#live-note').textContent = snapshot.message;
+  const balance = document.querySelector('#balance');
+  if (balance) {
+    if (snapshot.balanceUsdt != null && snapshot.tradeStakeUsdt != null) {
+      const open = snapshot.openTrades ?? 0;
+      const slots = snapshot.balanceSlots ?? 2;
+      balance.textContent = `Balance ${Number(snapshot.balanceUsdt).toFixed(2)} USDT. Next trade about ${Number(snapshot.tradeStakeUsdt).toFixed(2)} USDT margin. ${open} of ${slots} open.`;
+    }
+  }
   const holiday = document.querySelector('#holiday');
   if (snapshot.holiday?.active) {
     holiday.hidden = false;

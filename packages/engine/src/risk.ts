@@ -64,3 +64,15 @@ export function positionQty(
   const qtyRisk = (stakeGbp * maxMarginRisk) / dist;
   return roundQtyDown(Math.min(qtyNotional, qtyRisk));
 }
+
+/**
+ * Margin for the next order. One slot of equity, capped by free margin,
+ * with a fraction left unused so the exchange fee still fits.
+ */
+export function slotStake(equity: number, free: number, slots: number, reserveFrac: number): number {
+  if (!(equity > 0) || !(free > 0) || !(slots >= 1)) return 0;
+  const reserve = reserveFrac > 0 && reserveFrac < 1 ? reserveFrac : 0;
+  const raw = Math.min(equity / slots, free);
+  const kept = raw * (1 - reserve);
+  return kept > 0 ? kept : 0;
+}

@@ -42,6 +42,8 @@ export interface SetupFacts {
   holiday: boolean;
   btcAligned: boolean;
   fillsAtCap: boolean;
+  slotsFull: boolean;
+  noSize: boolean;
   boxId: string | null;
   side: Side | null;
 }
@@ -146,6 +148,8 @@ export function stepPair(runtime: PairRuntime, input: StepInput): StepResult {
     btcAligned: input.setup.btcAligned,
     displacementWithoutSweep: input.setup.displacementWithoutSweep,
     fillsAtCap: input.setup.fillsAtCap,
+    slotsFull: input.setup.slotsFull,
+    noSize: input.setup.noSize,
   };
   const decision = decide(decisionInput);
 
@@ -277,6 +281,8 @@ function emptySetup(): SetupFacts {
     holiday: false,
     btcAligned: false,
     fillsAtCap: false,
+    slotsFull: false,
+    noSize: false,
     boxId: null,
     side: null,
   };

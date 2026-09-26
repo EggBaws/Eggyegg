@@ -10,6 +10,7 @@ import {
   mexcSubmitJson,
   parseMexcKlines,
   signMexc,
+  usdtEquityFromAssets,
 } from '../src/index.ts';
 
 const req = {
@@ -115,6 +116,22 @@ describe('mexc live adapter', () => {
     const cancelBody = JSON.parse(calls[1].body ?? '{}') as { externalOid: string; symbol: string };
     assert.equal(cancelBody.externalOid, req.clientOrderId);
     assert.equal(cancelBody.symbol, 'ETH_USDT');
+  });
+
+  it('reads USDT equity and ignores other currencies', () => {
+    assert.equal(usdtEquityFromAssets(null), null);
+    assert.equal(usdtEquityFromAssets([{ currency: 'BTC', equity: 1, availableBalance: 1 }]), null);
+    assert.deepEqual(
+      usdtEquityFromAssets([
+        { currency: 'BTC', equity: 1, availableBalance: 1 },
+        { currency: 'USDT', equity: 250.5, availableBalance: 180.25, positionMargin: 70.25 },
+      ]),
+      { equity: 250.5, available: 180.25 },
+    );
+    assert.deepEqual(usdtEquityFromAssets([{ currency: 'USDT', availableBalance: 40, positionMargin: 10 }]), {
+      equity: 50,
+      available: 40,
+    });
   });
 
   it('parses columnar klines and drops the forming bar', () => {

@@ -75,6 +75,25 @@ export function liveArmGate(input: {
   return { arm: true, message: 'Live LIMIT fires are on. Market orders are not used.' };
 }
 
+/** USDT equity from GET /api/v1/private/account/assets. Other currencies are ignored. */
+export function usdtEquityFromAssets(data: unknown): { equity: number; available: number } | null {
+  if (!Array.isArray(data)) return null;
+  for (const row of data) {
+    if (!row || typeof row !== 'object') continue;
+    const asset = row as { currency?: string; equity?: number; availableBalance?: number; positionMargin?: number };
+    if (asset.currency !== 'USDT') continue;
+    const available = typeof asset.availableBalance === 'number' ? asset.availableBalance : null;
+    if (available == null || available < 0) return null;
+    const equity =
+      typeof asset.equity === 'number'
+        ? asset.equity
+        : available + (typeof asset.positionMargin === 'number' ? asset.positionMargin : 0);
+    if (!(equity > 0)) return null;
+    return { equity, available };
+  }
+  return null;
+}
+
 export function liveStopGate(confirm: string): { stop: boolean; message: string } {
   if (confirm !== 'STOP_LIVE') return { stop: false, message: 'Confirmation required.' };
   return { stop: true, message: 'Live fires are off.' };
@@ -85,6 +104,7 @@ export interface MexcLiveAdapter extends VenueAdapter {
   pingAccount(): Promise<boolean>;
   orderFilled(orderId: string): Promise<boolean>;
   moveProtection(req: { pair: string; orderId: string; sl: number; tp: number }): Promise<{ ok: boolean; error?: string }>;
+  accountEquity(): Promise<{ equity: number; available: number } | null>;
 }
 
 /** Move the stop to the lock and keep the runner target on an existing limit. Latest price. */
@@ -158,6 +178,12 @@ export function createMexcLive(opts: {
       if (!opts.apiKey || !opts.apiSecret) return false;
       const res = await call('GET', '/api/v1/private/account/assets', '');
       return res.ok;
+    },
+    async accountEquity() {
+      if (!opts.apiKey || !opts.apiSecret) return null;
+      const res = await call('GET', '/api/v1/private/account/assets', '');
+      if (!res.ok) return null;
+      return usdtEquityFromAssets(res.data);
     },
     async placeLimitWithProtection(req: LimitRequest): Promise<PlaceResult> {
       const built = mexcSubmitJson(req, leverage);

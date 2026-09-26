@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import { loadConfig } from '../src/config.ts';
 import { readOrderLog } from '../src/dryRun.ts';
 import { ChokeEngine, type NotifierPort, type VenuePort } from '../src/engine.ts';
+import { positionQty, slotStake } from '../src/risk.ts';
 import { demoBook, ETH_T0 } from '../src/synthetic.ts';
 import { findRepoRoot } from './root.ts';
 
@@ -220,5 +221,94 @@ describe('engine dry-run', () => {
     assert.equal(engine.venuePlaceCalls, 0);
     assert.equal(readOrderLog(log).length, 0);
     assert.ok((eth?.marks ?? []).some((m) => m.kind === 'FVG'));
+  });
+
+  it('sizes two desk trades from half of 100 USDT and waits on the third', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'choke-'));
+    const engine = new ChokeEngine({
+      config: { ...config, ticks: { BTCUSDT: 0.01, ETHUSDT: 0.01, SOLUSDT: 0.01 } },
+      venue: venue('kucoin'),
+      notifier: memoryNotifier(),
+      dryRunPath: join(dir, 'orders.json'),
+      balanceScale: { slots: 2, reserveFrac: 0.02, startUsdt: 100 },
+    });
+    const book = demoBook();
+    const ethUpdate = book.updates.find((u) => u.pair === 'ETHUSDT');
+    if (!ethUpdate) throw new Error('missing eth');
+    const updates = book.updates.map((u) => ({
+      ...u,
+      candles5m: ethUpdate.candles5m,
+      candles1h: ethUpdate.candles1h,
+      lastPrice: ethUpdate.lastPrice,
+    }));
+    const snap = await engine.runBook(updates);
+    assert.equal(snap.balanceUsdt, 100);
+    assert.equal(snap.balanceSlots, 2);
+    assert.equal(snap.tradeStakeUsdt, 49);
+    assert.equal(snap.openTrades, 2);
+    assert.equal(engine.runtime('BTCUSDT').state, 'WORKING');
+    assert.equal(engine.runtime('ETHUSDT').state, 'WORKING');
+    assert.equal(engine.runtime('SOLUSDT').state, 'WAIT_RETRACE');
+    assert.equal(engine.runtime('SOLUSDT').reason, 'SLOTS_FULL');
+    const order = engine.runtime('ETHUSDT').order;
+    if (!order) throw new Error('missing order');
+    assert.equal(order.stakeUsdt, 49);
+    assert.equal(order.qty, positionQty(49, 10, order.price, order.sl, config.max_margin_risk));
+    assert.ok(order.qty < 0.3);
+    assert.equal(order.price, 2650.2);
+    assert.equal(order.sl, 2639.2);
+    assert.equal(order.lockPrice, 2685.45);
+    assert.equal(order.tp, 2698.7);
+  });
+
+  it('sizes a live order from the MEXC USDT balance and sends nothing when the balance is missing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'choke-'));
+    let equity: { equity: number; available: number } | null = { equity: 250, available: 200 };
+    const engine = new ChokeEngine({
+      config,
+      venue: {
+        id: 'mexc',
+        health: () => ({ ok: true }),
+        placeLimitWithProtection() {
+          return { ok: true, orderId: '1' };
+        },
+        accountEquity() {
+          return Promise.resolve(equity);
+        },
+      },
+      notifier: memoryNotifier(),
+      dryRunPath: join(dir, 'orders.json'),
+      balanceScale: { slots: 2, reserveFrac: 0.02, startUsdt: 100 },
+    });
+    engine.setLiveArmed(true);
+    await engine.runBook(demoBook().updates);
+    const order = engine.runtime('ETHUSDT').order;
+    if (!order) throw new Error('missing order');
+    assert.equal(order.stakeUsdt, slotStake(250, 200, 2, 0.02));
+    assert.equal(order.qty, positionQty(order.stakeUsdt, 10, order.price, order.sl, config.max_margin_risk));
+    assert.equal(engine.snapshot().balanceUsdt, 250);
+    assert.equal(engine.venuePlaceCalls, 1);
+
+    const blocked = new ChokeEngine({
+      config,
+      venue: {
+        id: 'mexc',
+        health: () => ({ ok: true }),
+        placeLimitWithProtection() {
+          return { ok: true, orderId: '1' };
+        },
+        accountEquity() {
+          return Promise.resolve(null);
+        },
+      },
+      notifier: memoryNotifier(),
+      dryRunPath: join(dir, 'none.json'),
+      balanceScale: { slots: 2, reserveFrac: 0.02, startUsdt: 100 },
+    });
+    blocked.setLiveArmed(true);
+    await blocked.runBook(demoBook().updates);
+    assert.equal(blocked.runtime('ETHUSDT').state, 'WAIT_RETRACE');
+    assert.equal(blocked.runtime('ETHUSDT').reason, 'NO_BALANCE');
+    assert.equal(blocked.venuePlaceCalls, 0);
   });
 });

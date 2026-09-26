@@ -23,6 +23,8 @@ function setup(over: Partial<SetupFacts> = {}): SetupFacts {
     holiday: false,
     btcAligned: false,
     fillsAtCap: false,
+    slotsFull: false,
+    noSize: false,
     boxId: 'long:1',
     side: 'long',
     ...over,
@@ -51,6 +53,7 @@ function draft(): OrderDraft {
     marginRiskPct: 0.03,
     leverage: 10,
     tpPricePct: 0.0112,
+    stakeUsdt: 1000,
   };
 }
 
