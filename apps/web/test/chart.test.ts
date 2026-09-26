@@ -46,6 +46,10 @@ function harness() {
         arc() {},
         fill() {},
         setLineDash() {},
+        save() {},
+        restore() {},
+        rect() {},
+        clip() {},
         measureText(text: string) {
           return { width: String(text).length * 6 };
         },
@@ -80,19 +84,32 @@ function harness() {
       const pending = queue.splice(0);
       for (const fn of pending) fn();
     },
-    wheel(deltaY: number, x = 450) {
-      listeners.wheel[0]({ preventDefault() {}, deltaY, clientX: x, clientY: 260 });
+    wheel(deltaY: number, x = 450, y = 260, extra: Record<string, unknown> = {}) {
+      listeners.wheel[0]({ preventDefault() {}, deltaY, clientX: x, clientY: y, ...extra });
     },
-    pan(fromX: number, toX: number) {
-      listeners.pointerdown[0]({ pointerId: 1, clientX: fromX, clientY: 260 });
-      listeners.pointermove[0]({ pointerId: 1, clientX: toX, clientY: 260 });
-      listeners.pointerup[0]({ pointerId: 1, clientX: toX, clientY: 260 });
+    pan(fromX: number, toX: number, fromY = 260, toY = fromY) {
+      listeners.pointerdown[0]({ pointerId: 1, clientX: fromX, clientY: fromY });
+      listeners.pointermove[0]({ pointerId: 1, clientX: toX, clientY: toY });
+      listeners.pointerup[0]({ pointerId: 1, clientX: toX, clientY: toY });
+    },
+    dbl(x: number, y = 260) {
+      listeners.dblclick[0]({ clientX: x, clientY: y });
     },
     clear() {
       texts.length = 0;
       bodies.length = 0;
     },
   };
+}
+
+function gridSpread(ui: { clear(): void; wheel(deltaY: number, x?: number, y?: number): void; texts: string[] }) {
+  ui.clear();
+  ui.wheel(0, 400, 200);
+  const nums = ui.texts
+    .map((text) => Number(String(text).replace(/,/g, '')))
+    .filter((n) => Number.isFinite(n));
+  const grid = nums.slice(0, 5);
+  return Math.max(...grid) - Math.min(...grid);
 }
 
 function candles(n: number) {
@@ -122,9 +139,9 @@ describe('chart viewport', () => {
     assert.ok(ui.bodies.length > 10);
 
     for (let i = 0; i < 40; i++) ui.wheel(-100);
-    for (let i = 0; i < 40; i++) ui.pan(860, 20);
+    for (let i = 0; i < 40; i++) ui.pan(700, 20);
     ui.clear();
-    ui.pan(860, 20);
+    ui.pan(700, 20);
     assert.equal(ui.texts.includes('Waiting for candles'), false);
     assert.ok(ui.bodies.length >= 1);
 
@@ -159,6 +176,30 @@ describe('chart viewport', () => {
     ui.chart.setSeries(candles(30), [], 300_000);
     assert.equal(ui.texts.includes('Waiting for candles'), false);
     assert.ok(ui.bodies.length >= 1);
+  });
+
+  it('scales price from the right-hand scale and keeps that scale on refresh', () => {
+    const ui = harness();
+    ui.chart.setSeries(candles(80), [], 300_000);
+    const fitted = gridSpread(ui);
+    for (let i = 0; i < 8; i++) ui.wheel(-120, 870, 200);
+    const zoomed = gridSpread(ui);
+    assert.ok(zoomed < fitted * 0.6);
+    assert.equal(ui.texts.includes('Waiting for candles'), false);
+    assert.ok(ui.bodies.length >= 1);
+
+    ui.pan(870, 870, 360, 40);
+    const dragged = gridSpread(ui);
+    assert.ok(dragged < zoomed);
+
+    ui.clear();
+    ui.chart.setSeries(candles(80), [], 300_000);
+    const kept = gridSpread(ui);
+    assert.ok(Math.abs(kept - dragged) / dragged < 0.05);
+
+    ui.dbl(870, 200);
+    const reset = gridSpread(ui);
+    assert.ok(reset > dragged * 2);
   });
 
   it('paints once the canvas has a size', () => {

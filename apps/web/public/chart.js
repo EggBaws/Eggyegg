@@ -22,6 +22,7 @@ function mountChart(canvas) {
     start: 0,
     count: 80,
     stick: true,
+    price: null,
     cross: null,
     drag: null,
     pinch: null,
@@ -155,6 +156,86 @@ function mountChart(canvas) {
     return view.agg.slice(from, to);
   }
 
+  function dataRange(rows, from) {
+    const prices = [];
+    for (const candle of rows) prices.push(candle.high, candle.low);
+    for (const mark of view.drawn) {
+      if (mark.toIndex < from || mark.fromIndex > from + rows.length) continue;
+      if (Number.isFinite(mark.price)) prices.push(mark.price);
+      if (mark.price2 != null && Number.isFinite(mark.price2)) prices.push(mark.price2);
+    }
+    let min = Math.min(...prices);
+    let max = Math.max(...prices);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 1 };
+    if (min === max) {
+      const pad = Math.abs(min) * 0.002 || 1;
+      return { min: min - pad, max: max + pad };
+    }
+    const pad = (max - min) * 0.08;
+    return { min: min - pad, max: max + pad };
+  }
+
+  function shownRange(rows, from) {
+    if (view.price && view.price.max > view.price.min) return view.price;
+    return dataRange(rows, from);
+  }
+
+  function holdPrice(min, max) {
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+    if (min > max) {
+      const swap = min;
+      min = max;
+      max = swap;
+    }
+    const mid = (min + max) / 2 || 0;
+    const floor = Math.max(Math.abs(mid) * 0.00015, 1e-6);
+    const cap = Math.max(Math.abs(mid) * 5, floor * 40);
+    const span = max - min;
+    if (!(span > 0) || span < floor) {
+      min = mid - floor / 2;
+      max = mid + floor / 2;
+    } else if (span > cap) {
+      min = mid - cap / 2;
+      max = mid + cap / 2;
+    }
+    view.price = { min, max };
+  }
+
+  function priceAtY(y, box, range) {
+    const span = Math.max(1, box.bottom - box.top);
+    const t = Math.min(1, Math.max(0, (y - box.top) / span));
+    return range.max - t * (range.max - range.min);
+  }
+
+  function wheelFactor(deltaY) {
+    const sign = deltaY > 0 ? 1 : deltaY < 0 ? -1 : 0;
+    const steps = Math.abs(deltaY) > 40 ? sign : deltaY / 40;
+    return Math.exp(steps * Math.log(1.15));
+  }
+
+  function zoomTime(localX, factor) {
+    const box = plotBox();
+    const width = box.right - box.left;
+    const slot = width / view.count;
+    const anchor = view.start + (localX - box.left) / slot;
+    view.count *= factor;
+    view.start = anchor - (localX - box.left) / (width / view.count);
+    view.stick = false;
+    clamp();
+  }
+
+  function zoneAt(point) {
+    const box = plotBox();
+    if (point.x >= box.right) return 'price';
+    if (point.y >= box.bottom) return 'time';
+    return 'plot';
+  }
+
+  function setCursor(zone) {
+    if (!canvas.style) return;
+    canvas.style.cursor = zone === 'price' ? 'ns-resize' : zone === 'time' ? 'ew-resize' : 'crosshair';
+  }
+
   function waitForBox(attempt) {
     view.layoutWait = true;
     requestAnimationFrame(() => {
@@ -183,6 +264,9 @@ function mountChart(canvas) {
     ctx.clearRect(0, 0, box.width, box.height);
     ctx.fillStyle = '#0c100c';
     ctx.fillRect(0, 0, box.width, box.height);
+    ctx.fillStyle = '#101610';
+    ctx.fillRect(box.right, 0, Math.max(0, box.width - box.right), box.height);
+    ctx.fillRect(0, box.bottom, box.right, Math.max(0, box.height - box.bottom));
     let rows = slice();
     if (!rows.length && view.agg.length && !recovering) {
       clamp();
@@ -197,19 +281,10 @@ function mountChart(canvas) {
       ctx.fillText('Waiting for candles', 16, 28);
       return;
     }
-    const prices = [];
-    for (const candle of rows) prices.push(candle.high, candle.low);
     const from = Math.floor(view.start);
-    for (const mark of view.drawn) {
-      if (mark.toIndex < from || mark.fromIndex > from + rows.length) continue;
-      prices.push(mark.price);
-      if (mark.price2 != null) prices.push(mark.price2);
-    }
-    let min = Math.min(...prices);
-    let max = Math.max(...prices);
-    const pad = (max - min) * 0.08 || Math.abs(max) * 0.002 || 1;
-    min -= pad;
-    max += pad;
+    const range = shownRange(rows, from);
+    const min = range.min;
+    const max = range.max;
     const yOf = (price) => box.top + ((max - price) / (max - min)) * (box.bottom - box.top);
     const slot = (box.right - box.left) / view.count;
     const xOf = (index) => box.left + (index - view.start) * slot;
@@ -227,6 +302,18 @@ function mountChart(canvas) {
       ctx.stroke();
       ctx.fillText(fmtPrice(price), box.right + 6, y + 4);
     }
+    ctx.strokeStyle = '#243024';
+    ctx.beginPath();
+    ctx.moveTo(box.right + 0.5, box.top);
+    ctx.lineTo(box.right + 0.5, box.bottom);
+    ctx.moveTo(box.left, box.bottom + 0.5);
+    ctx.lineTo(box.right, box.bottom + 0.5);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(box.left, box.top, box.right - box.left, box.bottom - box.top);
+    ctx.clip();
 
     for (const mark of view.drawn) {
       if (mark.price2 == null) continue;
@@ -284,6 +371,7 @@ function mountChart(canvas) {
       ctx.fillStyle = ctx.strokeStyle;
       ctx.fillText(mark.label, Math.max(box.left + 4, Math.min(box.right - 36, x2 - 36)), y - 4);
     }
+    ctx.restore();
 
     const step = Math.max(1, Math.round(view.count / 6));
     const last = view.agg[view.agg.length - 1];
@@ -342,13 +430,31 @@ function mountChart(canvas) {
     if (!view.agg.length) return;
     const box = plotBox();
     const point = localPoint(event);
-    const slot = (box.right - box.left) / view.count;
-    const anchor = view.start + (point.x - box.left) / slot;
-    const factor = event.deltaY > 0 ? 1.15 : 1 / 1.15;
-    view.count *= factor;
-    view.start = anchor - (point.x - box.left) / ((box.right - box.left) / view.count);
-    view.stick = false;
-    clamp();
+    const factor = wheelFactor(event.deltaY);
+    if (point.x >= box.right) {
+      const rows = slice();
+      const range = rows.length ? shownRange(rows, Math.floor(view.start)) : null;
+      if (!range) return;
+      if (event.shiftKey) {
+        const span = range.max - range.min;
+        const shift = (event.deltaY / Math.max(40, box.bottom - box.top)) * span;
+        holdPrice(range.min + shift, range.max + shift);
+      } else {
+        const anchor = priceAtY(point.y, box, range);
+        holdPrice(anchor - (anchor - range.min) * factor, anchor + (range.max - anchor) * factor);
+      }
+      draw();
+      return;
+    }
+    if (event.shiftKey || (Math.abs(event.deltaX) > Math.abs(event.deltaY) && event.deltaX)) {
+      const slot = (box.right - box.left) / view.count;
+      view.start += (event.shiftKey ? event.deltaY : event.deltaX) / slot;
+      view.stick = false;
+      clamp();
+      draw();
+      return;
+    }
+    zoomTime(point.x, factor);
     draw();
   }, { passive: false });
 
@@ -375,11 +481,34 @@ function mountChart(canvas) {
     };
   }
 
+  function chartDrag(event) {
+    const point = localPoint(event);
+    const rows = slice();
+    const price = view.price && rows.length ? { min: view.price.min, max: view.price.max } : null;
+    return { kind: 'plot', x: event.clientX, y: event.clientY, start: view.start, price };
+  }
+
   canvas.addEventListener('pointerdown', (event) => {
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     canvas.setPointerCapture(event.pointerId);
-    if (pointers.size >= 2) beginPinch();
-    else view.drag = { x: event.clientX, start: view.start };
+    if (pointers.size >= 2) {
+      beginPinch();
+      return;
+    }
+    const point = localPoint(event);
+    const zone = zoneAt(point);
+    if (zone === 'price') {
+      const rows = slice();
+      const range = rows.length ? shownRange(rows, Math.floor(view.start)) : null;
+      view.drag = range
+        ? { kind: event.shiftKey ? 'price-pan' : 'price', y: event.clientY, min: range.min, max: range.max }
+        : chartDrag(event);
+    } else if (zone === 'time') {
+      view.drag = { kind: 'time', x: event.clientX, count: view.count, start: view.start, localX: point.x };
+    } else {
+      view.drag = chartDrag(event);
+    }
+    setCursor(zone);
   });
   canvas.addEventListener('pointermove', (event) => {
     if (pointers.has(event.pointerId)) pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -399,10 +528,42 @@ function mountChart(canvas) {
     }
     if (view.drag && pointers.size === 1) {
       const box = plotBox();
-      const slot = (box.right - box.left) / view.count;
-      view.start = view.drag.start - (event.clientX - view.drag.x) / slot;
-      view.stick = false;
-      clamp();
+      if (view.drag.kind === 'price' || view.drag.kind === 'price-pan') {
+        const height = Math.max(40, box.bottom - box.top);
+        const dy = event.clientY - view.drag.y;
+        if (view.drag.kind === 'price-pan') {
+          const span = view.drag.max - view.drag.min;
+          const shift = (dy / height) * span;
+          holdPrice(view.drag.min + shift, view.drag.max + shift);
+        } else {
+          const scale = Math.exp(dy / height);
+          const mid = (view.drag.min + view.drag.max) / 2;
+          const half = ((view.drag.max - view.drag.min) / 2) * scale;
+          holdPrice(mid - half, mid + half);
+        }
+      } else if (view.drag.kind === 'time') {
+        const width = Math.max(40, box.right - box.left);
+        const scale = Math.exp((event.clientX - view.drag.x) / width);
+        const slot0 = width / view.drag.count;
+        const anchor = view.drag.start + (view.drag.localX - box.left) / slot0;
+        view.count = view.drag.count * scale;
+        view.start = anchor - (view.drag.localX - box.left) / (width / view.count);
+        view.stick = false;
+        clamp();
+      } else {
+        const slot = (box.right - box.left) / view.count;
+        view.start = view.drag.start - (event.clientX - view.drag.x) / slot;
+        view.stick = false;
+        clamp();
+        if (view.drag.price) {
+          const height = Math.max(40, box.bottom - box.top);
+          const span = view.drag.price.max - view.drag.price.min;
+          const shift = ((event.clientY - view.drag.y) / height) * span;
+          holdPrice(view.drag.price.min + shift, view.drag.price.max + shift);
+        }
+      }
+    } else {
+      setCursor(zoneAt(localPoint(event)));
     }
     view.cross = localPoint(event);
     draw();
@@ -413,7 +574,7 @@ function mountChart(canvas) {
     view.drag = null;
     if (pointers.size === 1) {
       const left = [...pointers.values()][0];
-      view.drag = { x: left.x, start: view.start };
+      view.drag = { kind: 'plot', x: left.x, y: left.y, start: view.start, price: view.price ? { min: view.price.min, max: view.price.max } : null };
     }
   }
   canvas.addEventListener('pointerup', endPointer);
@@ -423,13 +584,22 @@ function mountChart(canvas) {
     view.cross = null;
     draw();
   });
-  canvas.addEventListener('dblclick', () => fit());
+  canvas.addEventListener('dblclick', (event) => {
+    const point = localPoint(event);
+    if (zoneAt(point) === 'price') {
+      view.price = null;
+      draw();
+      return;
+    }
+    fit();
+  });
 
   const observer = new ResizeObserver(() => draw());
   observer.observe(canvas);
 
   function fit() {
     view.stick = true;
+    view.price = null;
     view.count = Math.min(120, view.agg.length || 120);
     view.start = Math.max(0, view.agg.length - view.count);
     clamp();
@@ -438,6 +608,7 @@ function mountChart(canvas) {
 
   function frameSetup() {
     view.stick = false;
+    view.price = null;
     const n = view.agg.length;
     if (!n) return;
     view.count = Math.min(72, n);
